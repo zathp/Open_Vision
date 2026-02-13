@@ -5,8 +5,13 @@ This TODO list tracks the remaining implementation work for `open_vision.py`.
 ## Priority 1 - Core Functionality (Make Tool Usable)
 
 - [ ] Update to `Pillow` lib
-  - Open Vision currently uses `PIL (Python Image Library)` which has not been updated since 2011.
-  - **Recommended Steps:** Use the `Pillow` library, the successor project of PIL
+  - Replace legacy PIL wording with Pillow package usage.
+  - Use `pip install pillow` for dependency management.
+  - Note: Pillow imports still use the `PIL` namespace (for example: `from PIL import Image`).
+
+- [ ] Convert image-processing functions to Pillow APIs
+  - Ensure all image open/convert/save and pixel-processing paths rely on Pillow.
+  - Remove remaining references that describe the project as using legacy PIL.
 
 - [ ] Implement `extract_unique_colors()`
   - Read current image pixels.
@@ -62,7 +67,7 @@ This TODO list tracks the remaining implementation work for `open_vision.py`.
 - [ ] Add input validation and user-safe error handling
   - Empty image list protection.
   - Missing selection handling.
-  - Try/except around file IO and PIL operations.
+  - Try/except around file IO and Pillow operations.
 
 - [ ] Add status/progress feedback
   - Status bar text for long operations.

@@ -28,8 +28,8 @@ This document describes what is currently implemented in `open_vision.py`.
 ## Implemented Data Model
 - `ImageRecord` dataclass:
   - `path: Path`
-  - `original: PIL.Image`
-  - `modified: PIL.Image`
+  - `original: Pillow Image`
+  - `modified: Pillow Image`
 - App state:
   - `images`
   - `current_image_index`
@@ -48,7 +48,7 @@ This document describes what is currently implemented in `open_vision.py`.
 
 ### 3) Batch image loading
 - `load_images()` uses a file picker for `png/jpg/jpeg/bmp`.
-- Each loaded image is converted to `RGBA` with PIL.
+- Each loaded image is converted to `RGBA` with Pillow.
 - Both original and initial modified images are stored.
 - Loaded image names are added to the image list.
 - First image is auto-selected after initial load.
@@ -64,8 +64,8 @@ This document describes what is currently implemented in `open_vision.py`.
 
 ### 6) Preview rendering
 - `refresh_previews()` updates both original/modified preview panes.
-- `_set_preview()` converts PIL image to pixmap and scales to label size.
-- `_to_png_bytes()` helper converts PIL image to PNG bytes.
+- `_set_preview()` converts Pillow image to pixmap and scales to label size.
+- `_to_png_bytes()` helper converts Pillow image to PNG bytes.
 
 ### 7) Information popup helper
 - `_show_info()` displays user messages via `QMessageBox.information`.
