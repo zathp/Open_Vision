@@ -19,7 +19,9 @@ from PyQt5.QtWidgets import (
     QWidget,
     QFileDialog,
     QColorDialog,
+    QAbstractItemView
 )
+import math
 
 RgbaColor = Tuple[int, int, int, int]
 
@@ -65,6 +67,7 @@ class OpenVisionMainWindow(QMainWindow):
 
         self.images_list = QListWidget()
         self.original_colors_list = QListWidget()
+        self.original_colors_list.setSelectionMode(QAbstractItemView.MultiSelection)
         self.replacement_colors_list = QListWidget()
 
         self.label_base_color = QLabel("Base: not selected")
@@ -144,21 +147,21 @@ class OpenVisionMainWindow(QMainWindow):
     def extract_unique_colors(self) -> None:
         if self.current_image_index is None:
             return
-            
+        
         current = self.images[self.current_image_index]
         image = current.original
         
-        # Extract unique colors safely
-        max_colors = image.width * image.height
-        color_data = image.getcolors(maxcolors=max_colors)
+        import numpy as np
+        img_array = np.array(image)
+        pixels = img_array.reshape(-1, 4)
         
-        if color_data:
-            self.unique_colors = [rgba for count, rgba in color_data]
-            # Reset mappings when a new image is loaded
-            self.color_mappings = {color: color for color in self.unique_colors}
-        else:
-            self.unique_colors = []
-            self.color_mappings = {}
+        unique = np.unique(pixels, axis=0)
+        
+        self.unique_colors = [tuple(color) for color in unique]
+        
+        self.color_mappings = {color: color for color in self.unique_colors}
+        
+        print("Extracted unique colors:", len(self.unique_colors))
 
     def populate_color_lists(self) -> None:
         self.original_colors_list.clear()
@@ -200,7 +203,31 @@ class OpenVisionMainWindow(QMainWindow):
         self.label_base_color.setText(f"Base: {self.base_color}")
 
     def select_by_range(self) -> None:
-        raise NotImplementedError("Implement RGB/HSV tolerance matching for color selection")
+        if self.base_color is None:
+            QMessageBox.warning(self, "No Base Color", "Pick a base color first.")
+            return
+
+        tolerance = 30  # You can later make this user-adjustable
+        r0, g0, b0, _ = self.base_color
+
+        selected_colors = []
+
+        for color in self.unique_colors:
+            r, g, b, a = color
+            distance = math.sqrt((r-r0)**2 + (g-g0)**2 + (b-b0)**2)
+            if distance <= tolerance:
+                selected_colors.append(color)
+
+        # Highlight selected colors in original list
+        self.original_colors_list.clearSelection()
+        for i, color in enumerate(self.unique_colors):
+            if color in selected_colors:
+                item = self.original_colors_list.item(i)
+                if item is not None:
+                    item.setSelected(True)
+        print("Base color:", self.base_color)
+        print("Total unique colors:", len(self.unique_colors))
+        print("Matched:", color)
 
     def apply_hsv_to_selected(self) -> None:
         raise NotImplementedError("Implement HSV mass-edit for selected colors")
