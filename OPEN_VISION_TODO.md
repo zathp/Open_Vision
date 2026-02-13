@@ -4,6 +4,10 @@ This TODO list tracks the remaining implementation work for `open_vision.py`.
 
 ## Priority 1 - Core Functionality (Make Tool Usable)
 
+- [ ] Update to `Pillow` lib
+  - Open Vision currently uses `PIL (Python Image Library)` which has not been updated since 2011.
+  - **Recommended Steps:** Use the `Pillow` library, the successor project of PIL
+
 - [ ] Implement `extract_unique_colors()`
   - Read current image pixels.
   - Build unique RGBA color list.
