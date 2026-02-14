@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Tuple
 
 import sys
 
-from PIL import Image
+from pillow_compat import Image
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QPixmap, QImage
 from PyQt5.QtWidgets import (
@@ -227,7 +227,7 @@ class OpenVisionMainWindow(QMainWindow):
                     item.setSelected(True)
         print("Base color:", self.base_color)
         print("Total unique colors:", len(self.unique_colors))
-        print("Matched:", color)
+        print("Matched:", selected_colors)
 
     def apply_hsv_to_selected(self) -> None:
         raise NotImplementedError("Implement HSV mass-edit for selected colors")
