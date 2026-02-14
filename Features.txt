@@ -5,3 +5,40 @@ The ability to stack image filters visually to combine filters together, and see
 node based visual chaining of filters and image merges
 
 (side) build for exporting to blender texture maps
+
+Current architecture update (implemented):
+- Main app file is now focused on a project menu for selecting and creating working projects.
+- Image editing functions are moved out to separate modules.
+- A dedicated editor window is launched from the selected project.
+- Project files use the .ovproj format in a Projects directory.
+
+Expanded MVP direction (clarified):
+
+1) Project file scope (.ovproj)
+- Save loaded image paths.
+- Save filter stack per image.
+- Save global filter graph data.
+- Save output presets.
+- Goal: reopening a project restores practical working context.
+
+2) Filter stack MVP behavior
+- Use a linear ordered list of filters only (no branching in first version).
+- Filters apply top-to-bottom.
+- Keep room for future enable/disable and masking without breaking format.
+
+3) Node graph MVP scope
+- Required first nodes:
+	- Image Input node
+	- Color Replace node
+	- Output node
+- Goal: prove end-to-end graph execution with minimum complexity.
+
+4) Blender export MVP scope
+- Generate Base Color (Albedo) output first.
+- Defer Normal, Roughness, Metallic, Height, and ORM packing until after Albedo pipeline is stable.
+
+Proposed next additions to define soon:
+- Project versioning field for .ovproj format upgrades.
+- Missing-file handling strategy for moved/deleted source images.
+- Filter parameter schema (shared format for list mode and node mode).
+- Export naming templates and conflict policy (overwrite, suffix, or prompt).
