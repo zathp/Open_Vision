@@ -4,9 +4,9 @@ from typing import Dict, List, Optional, Tuple
 
 import sys
 
-from PIL import Image
+from pillow_compat import Image
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QPixmap
+from PyQt5.QtGui import QColor, QPixmap, QImage
 from PyQt5.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -19,7 +19,9 @@ from PyQt5.QtWidgets import (
     QWidget,
     QFileDialog,
     QColorDialog,
+    QAbstractItemView
 )
+import math
 
 RgbaColor = Tuple[int, int, int, int]
 
@@ -27,14 +29,14 @@ RgbaColor = Tuple[int, int, int, int]
 @dataclass
 class ImageRecord:
     path: Path
-    original: Image.Image
-    modified: Image.Image
+    original: 'Image.Image'
+    modified: 'Image.Image'
 
 
 class OpenVisionMainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Open Vision (PyQt5) - Skeleton")
+        self.setWindowTitle("Open Vision (PyQt5) - Implemented")
         self.resize(1400, 850)
 
         self.images: List[ImageRecord] = []
@@ -65,6 +67,7 @@ class OpenVisionMainWindow(QMainWindow):
 
         self.images_list = QListWidget()
         self.original_colors_list = QListWidget()
+        self.original_colors_list.setSelectionMode(QAbstractItemView.MultiSelection)
         self.replacement_colors_list = QListWidget()
 
         self.label_base_color = QLabel("Base: not selected")
@@ -142,21 +145,54 @@ class OpenVisionMainWindow(QMainWindow):
         self.refresh_previews()
 
     def extract_unique_colors(self) -> None:
-        raise NotImplementedError("Implement extraction of unique RGBA values from current image")
+        if self.current_image_index is None:
+            return
+        
+        current = self.images[self.current_image_index]
+        image = current.original
+        
+        import numpy as np
+        img_array = np.array(image)
+        pixels = img_array.reshape(-1, 4)
+        
+        unique = np.unique(pixels, axis=0)
+        
+        self.unique_colors = [tuple(color) for color in unique]
+        
+        self.color_mappings = {color: color for color in self.unique_colors}
+        
+        print("Extracted unique colors:", len(self.unique_colors))
 
     def populate_color_lists(self) -> None:
-        raise NotImplementedError("Implement syncing original/replacement list widgets")
+        self.original_colors_list.clear()
+        self.replacement_colors_list.clear()
+
+        for original_color in self.unique_colors:
+            self.original_colors_list.addItem(f"RGBA: {original_color}")
+            
+            mapped_color = self.color_mappings.get(original_color, original_color)
+            self.replacement_colors_list.addItem(f"RGBA: {mapped_color}")
 
     def change_replacement_color(self) -> None:
-        selected = self.replacement_colors_list.currentItem()
-        if selected is None:
+        selected_row = self.replacement_colors_list.currentRow()
+        if selected_row < 0:
             return
 
         color = QColorDialog.getColor(parent=self, title="Pick replacement color")
         if not color.isValid():
             return
-
-        self._show_info("TODO", "Wire selected replacement color into color_mappings")
+            
+        # Get the new RGBA tuple
+        new_color = (color.red(), color.green(), color.blue(), 255)
+        
+        # Find the original color this row corresponds to
+        original_color = self.unique_colors[selected_row]
+        
+        # Update the mapping dictionary
+        self.color_mappings[original_color] = new_color
+        
+        # Update the UI list item
+        self.replacement_colors_list.item(selected_row).setText(f"RGBA: {new_color}")
 
     def pick_base_color(self) -> None:
         color = QColorDialog.getColor(parent=self, title="Pick base color")
@@ -167,7 +203,31 @@ class OpenVisionMainWindow(QMainWindow):
         self.label_base_color.setText(f"Base: {self.base_color}")
 
     def select_by_range(self) -> None:
-        raise NotImplementedError("Implement RGB/HSV tolerance matching for color selection")
+        if self.base_color is None:
+            QMessageBox.warning(self, "No Base Color", "Pick a base color first.")
+            return
+
+        tolerance = 30  # You can later make this user-adjustable
+        r0, g0, b0, _ = self.base_color
+
+        selected_colors = []
+
+        for color in self.unique_colors:
+            r, g, b, a = color
+            distance = math.sqrt((r-r0)**2 + (g-g0)**2 + (b-b0)**2)
+            if distance <= tolerance:
+                selected_colors.append(color)
+
+        # Highlight selected colors in original list
+        self.original_colors_list.clearSelection()
+        for i, color in enumerate(self.unique_colors):
+            if color in selected_colors:
+                item = self.original_colors_list.item(i)
+                if item is not None:
+                    item.setSelected(True)
+        print("Base color:", self.base_color)
+        print("Total unique colors:", len(self.unique_colors))
+        print("Matched:", selected_colors)
 
     def apply_hsv_to_selected(self) -> None:
         raise NotImplementedError("Implement HSV mass-edit for selected colors")
@@ -176,16 +236,68 @@ class OpenVisionMainWindow(QMainWindow):
         raise NotImplementedError("Implement HSV mass-edit for all replacement mappings")
 
     def apply_to_current(self) -> None:
-        raise NotImplementedError("Implement applying color_mappings to current image")
+        if self.current_image_index is None:
+            return
+            
+        current = self.images[self.current_image_index]
+        img = current.original.copy()
+        pixels = img.load()
+        
+        for y in range(img.height):
+            for x in range(img.width):
+                orig_color = pixels[x, y]
+                if orig_color in self.color_mappings:
+                    pixels[x, y] = self.color_mappings[orig_color]
+                    
+        current.modified = img
+        self.refresh_previews()
 
     def apply_to_all(self) -> None:
-        raise NotImplementedError("Implement applying color_mappings to all loaded images")
+        if not self.images:
+            return
+            
+        for record in self.images:
+            img = record.original.copy()
+            pixels = img.load()
+            
+            for y in range(img.height):
+                for x in range(img.width):
+                    orig_color = pixels[x, y]
+                    if orig_color in self.color_mappings:
+                        pixels[x, y] = self.color_mappings[orig_color]
+                        
+            record.modified = img
+            
+        self.refresh_previews()
+        self._show_info("Success", "Color mappings applied to all loaded images.")
 
     def save_current(self) -> None:
-        raise NotImplementedError("Implement save dialog and export for active modified image")
+        if self.current_image_index is None:
+            return
+            
+        current = self.images[self.current_image_index]
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Current Image", str(current.path), "PNG Images (*.png)"
+        )
+        
+        if save_path:
+            current.modified.save(save_path, format="PNG")
+            self._show_info("Success", "Current image saved successfully.")
 
     def save_all(self) -> None:
-        raise NotImplementedError("Implement batch output folder save for all modified images")
+        if not self.images:
+            return
+            
+        folder = QFileDialog.getExistingDirectory(self, "Select Save Directory")
+        if not folder:
+            return
+            
+        out_dir = Path(folder)
+        for record in self.images:
+            save_path = out_dir / f"modified_{record.path.name}"
+            record.modified.save(save_path, format="PNG")
+            
+        self._show_info("Success", f"All {len(self.images)} images saved to {folder}")
 
     def refresh_previews(self) -> None:
         if self.current_image_index is None:
@@ -197,19 +309,17 @@ class OpenVisionMainWindow(QMainWindow):
         self._set_preview(self.label_original_preview, current.original)
         self._set_preview(self.label_modified_preview, current.modified)
 
-    def _set_preview(self, label: QLabel, image: Image.Image) -> None:
+    def _set_preview(self, label: QLabel, image: 'Image.Image') -> None:
         image_rgb = image.convert("RGB")
-        width, height = image_rgb.size
-        raw = image_rgb.tobytes("raw", "RGB")
         pixmap = QPixmap()
         if not pixmap.loadFromData(self._to_png_bytes(image_rgb), "PNG"):
             label.setText("Preview failed")
             return
 
-        scaled = pixmap.scaled(label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        scaled = pixmap.scaled(label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
         label.setPixmap(scaled)
 
-    def _to_png_bytes(self, image: Image.Image) -> bytes:
+    def _to_png_bytes(self, image: 'Image.Image') -> bytes:
         from io import BytesIO
 
         buffer = BytesIO()
