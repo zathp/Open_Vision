@@ -1,0 +1,7 @@
+Savable project files with multiple files and filters saved in them
+
+The ability to stack image filters visually to combine filters together, and see what filters have been aplied in what order in the project file.
+
+node based visual chaining of filters and image merges
+
+(side) build for exporting to blender texture maps
