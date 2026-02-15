@@ -27,46 +27,96 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-PROJECTS_DIR_NAME = "Projects"
-PROJECT_EXTENSION = ".ovproj"
-SCHEMA_VERSION = 1
+from OV_Libs.constants import (
+    PROJECTS_DIR_NAME,
+    PROJECT_EXTENSION,
+    SCHEMA_VERSION,
+    SAFE_FILENAME_CHARS,
+    FILENAME_REPLACEMENT_CHAR,
+    DEFAULT_INPUT_NODE_X,
+    DEFAULT_INPUT_NODE_Y,
+    DEFAULT_PROCESS_NODE_X,
+    DEFAULT_PROCESS_NODE_Y,
+    DEFAULT_OUTPUT_NODE_X,
+    DEFAULT_OUTPUT_NODE_Y,
+    NODE_TYPE_INPUT,
+    NODE_TYPE_PROCESS,
+    NODE_TYPE_OUTPUT,
+    NODE_TYPE_DEFAULT,
+    PORT_INPUT,
+    PORT_OUTPUT,
+    FIELD_SCHEMA_VERSION,
+    FIELD_NAME,
+    FIELD_CREATED_AT,
+    FIELD_IMAGE_PATHS,
+    FIELD_FILTER_STACKS,
+    FIELD_NODE_GRAPH,
+    FIELD_OUTPUT_PRESETS,
+    FIELD_NODES,
+    FIELD_CONNECTIONS,
+    FIELD_NODE_ID,
+    FIELD_NODE_TYPE,
+    FIELD_NODE_X,
+    FIELD_NODE_Y,
+    FIELD_FROM_NODE,
+    FIELD_FROM_PORT,
+    FIELD_TO_NODE,
+    FIELD_TO_PORT,
+)
+
+# Legacy exports for backward compatibility
+PROJECTS_DIR_NAME_COMPAT = PROJECTS_DIR_NAME
+PROJECT_EXTENSION_COMPAT = PROJECT_EXTENSION
+SCHEMA_VERSION_COMPAT = SCHEMA_VERSION
 
 
 def _default_test_graph() -> Dict[str, Any]:
+    """Create a default test graph with three connected nodes."""
     input_id = str(uuid.uuid4())
     process_id = str(uuid.uuid4())
     output_id = str(uuid.uuid4())
 
     return {
-        "nodes": [
-            {"id": input_id, "type": "Test Input", "x": 80.0, "y": 100.0},
-            {"id": process_id, "type": "Test Process", "x": 340.0, "y": 240.0},
-            {"id": output_id, "type": "Test Output", "x": 620.0, "y": 100.0},
+        FIELD_NODES: [
+            {FIELD_NODE_ID: input_id, FIELD_NODE_TYPE: NODE_TYPE_INPUT, 
+             FIELD_NODE_X: DEFAULT_INPUT_NODE_X, FIELD_NODE_Y: DEFAULT_INPUT_NODE_Y},
+            {FIELD_NODE_ID: process_id, FIELD_NODE_TYPE: NODE_TYPE_PROCESS, 
+             FIELD_NODE_X: DEFAULT_PROCESS_NODE_X, FIELD_NODE_Y: DEFAULT_PROCESS_NODE_Y},
+            {FIELD_NODE_ID: output_id, FIELD_NODE_TYPE: NODE_TYPE_OUTPUT, 
+             FIELD_NODE_X: DEFAULT_OUTPUT_NODE_X, FIELD_NODE_Y: DEFAULT_OUTPUT_NODE_Y},
         ],
-        "connections": [
-            {"from_node": input_id, "from_port": "output", "to_node": process_id, "to_port": "input"},
-            {"from_node": process_id, "from_port": "output", "to_node": output_id, "to_port": "input"},
+        FIELD_CONNECTIONS: [
+            {FIELD_FROM_NODE: input_id, FIELD_FROM_PORT: PORT_OUTPUT, 
+             FIELD_TO_NODE: process_id, FIELD_TO_PORT: PORT_INPUT},
+            {FIELD_FROM_NODE: process_id, FIELD_FROM_PORT: PORT_OUTPUT, 
+             FIELD_TO_NODE: output_id, FIELD_TO_PORT: PORT_INPUT},
         ],
     }
 
 
 def _normalize_connection(connection: Dict[str, Any]) -> Dict[str, str]:
-    if "from_node" in connection or "to_node" in connection:
-        from_node = str(connection.get("from_node") or "")
-        from_port = str(connection.get("from_port") or "output")
-        to_node = str(connection.get("to_node") or "")
-        to_port = str(connection.get("to_port") or "input")
+    """
+    Normalize connection data to use consistent field names.
+    
+    Handles both legacy and modern connection formats.
+    """
+    if FIELD_FROM_NODE in connection or FIELD_TO_NODE in connection:
+        from_node = str(connection.get(FIELD_FROM_NODE) or "")
+        from_port = str(connection.get(FIELD_FROM_PORT) or PORT_OUTPUT)
+        to_node = str(connection.get(FIELD_TO_NODE) or "")
+        to_port = str(connection.get(FIELD_TO_PORT) or PORT_INPUT)
     else:
+        # Legacy format using "from" and "to"
         from_node = str(connection.get("from") or "")
-        from_port = "output"
+        from_port = PORT_OUTPUT
         to_node = str(connection.get("to") or "")
-        to_port = "input"
+        to_port = PORT_INPUT
 
     return {
-        "from_node": from_node,
-        "from_port": from_port,
-        "to_node": to_node,
-        "to_port": to_port,
+        FIELD_FROM_NODE: from_node,
+        FIELD_FROM_PORT: from_port,
+        FIELD_TO_NODE: to_node,
+        FIELD_TO_PORT: to_port,
     }
 
 
@@ -82,8 +132,27 @@ def list_project_files(base_dir: Path) -> List[Path]:
 
 
 def create_project_file(base_dir: Path, project_name: str) -> Path:
+    """
+    Create a new project file with default structure.
+    
+    Args:
+        base_dir: Base directory containing the Projects folder
+        project_name: Human-readable name for the project
+        
+    Returns:
+        Path to the created project file
+        
+    Raises:
+        ValueError: If project_name is empty after sanitization
+    """
     projects_dir = get_projects_dir(base_dir)
-    safe_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in project_name).strip("_")
+    
+    # Sanitize filename - keep only alphanumeric and safe characters
+    safe_name = "".join(
+        c if c.isalnum() or c in SAFE_FILENAME_CHARS else FILENAME_REPLACEMENT_CHAR 
+        for c in project_name
+    ).strip(FILENAME_REPLACEMENT_CHAR)
+    
     if not safe_name:
         safe_name = "new_project"
 
@@ -94,13 +163,13 @@ def create_project_file(base_dir: Path, project_name: str) -> Path:
         counter += 1
 
     payload: Dict[str, object] = {
-        "schema_version": SCHEMA_VERSION,
-        "name": project_name,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "image_paths": [],
-        "filter_stacks": {},
-        "node_graph": _default_test_graph(),
-        "output_presets": {},
+        FIELD_SCHEMA_VERSION: SCHEMA_VERSION,
+        FIELD_NAME: project_name,
+        FIELD_CREATED_AT: datetime.now().isoformat(timespec="seconds"),
+        FIELD_IMAGE_PATHS: [],
+        FIELD_FILTER_STACKS: {},
+        FIELD_NODE_GRAPH: _default_test_graph(),
+        FIELD_OUTPUT_PRESETS: {},
     }
 
     project_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -108,12 +177,21 @@ def create_project_file(base_dir: Path, project_name: str) -> Path:
 
 
 def load_project_name(project_path: Path) -> str:
+    """
+    Load the project name from a project file.
+    
+    Args:
+        project_path: Path to the project file
+        
+    Returns:
+        The project name, or the filename stem if loading fails
+    """
     try:
         payload = json.loads(project_path.read_text(encoding="utf-8"))
-    except Exception:
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
         return project_path.stem
 
-    return str(payload.get("name") or project_path.stem)
+    return str(payload.get(FIELD_NAME) or project_path.stem)
 
 
 def load_project_data(project_path: Path) -> Dict[str, Any]:

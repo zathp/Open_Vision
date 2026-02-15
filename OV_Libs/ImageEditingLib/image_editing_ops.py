@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from OV_Libs.ImageEditingLib.image_models import RgbaColor
+from OV_Libs.constants import OUTPUT_FILE_PREFIX, DEFAULT_OUTPUT_FORMAT
 
 
 def extract_unique_colors(image: Any) -> List[RgbaColor]:
@@ -83,10 +84,19 @@ def save_images(records, output_dir: Path) -> int:
         
     Returns:
         The number of images successfully saved
+        
+    Raises:
+        OSError: If directory cannot be accessed or files cannot be written
     """
+    if not output_dir.exists():
+        raise OSError(f"Output directory does not exist: {output_dir}")
+    
+    if not output_dir.is_dir():
+        raise OSError(f"Output path is not a directory: {output_dir}")
+    
     saved_count = 0
     for record in records:
-        save_path = output_dir / f"modified_{record.path.name}"
-        record.modified.save(save_path, format="PNG")
+        save_path = output_dir / f"{OUTPUT_FILE_PREFIX}{record.path.name}"
+        record.modified.save(save_path, format=DEFAULT_OUTPUT_FORMAT)
         saved_count += 1
     return saved_count

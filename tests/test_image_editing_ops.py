@@ -202,3 +202,34 @@ class TestSaveImages:
             mock_image.save.assert_called_once()
             call_kwargs = mock_image.save.call_args[1]
             assert call_kwargs.get('format') == 'PNG'
+
+    def test_raises_error_for_nonexistent_directory(self):
+        """Should raise OSError if output directory doesn't exist."""
+        mock_image = Mock()
+        record = ImageRecord(
+            path=Path("test.png"),
+            original=mock_image,
+            modified=mock_image,
+        )
+        
+        nonexistent_dir = Path("/nonexistent/path/that/does/not/exist")
+        
+        with pytest.raises(OSError, match="does not exist"):
+            save_images([record], nonexistent_dir)
+            
+    def test_raises_error_for_file_as_directory(self):
+        """Should raise OSError if output path is a file, not a directory."""
+        import tempfile
+        
+        with tempfile.NamedTemporaryFile() as tmpfile:
+            mock_image = Mock()
+            record = ImageRecord(
+                path=Path("test.png"),
+                original=mock_image,
+                modified=mock_image,
+            )
+            
+            file_path = Path(tmpfile.name)
+            
+            with pytest.raises(OSError, match="not a directory"):
+                save_images([record], file_path)
