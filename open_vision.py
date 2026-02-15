@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (
     QInputDialog,
 )
 
-from image_editor_window import OpenVisionEditorWindow
+from node_editor_window import NodeEditorWindow
 from project_store import create_project_file, list_project_files, load_project_name
 
 
@@ -30,7 +30,7 @@ class OpenVisionMainWindow(QMainWindow):
 
         self.base_dir = Path(__file__).resolve().parent
         self.project_files: List[Path] = []
-        self.editor_window: Optional[OpenVisionEditorWindow] = None
+        self.editor_window: Optional[NodeEditorWindow] = None
 
         self._build_ui()
         self._connect_signals()
@@ -55,7 +55,7 @@ class OpenVisionMainWindow(QMainWindow):
         self.label_menu_title = QLabel("Open Vision Project Menu")
         self.label_menu_title.setAlignment(Qt.AlignCenter)
         self.label_menu_title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        self.label_project_hint = QLabel("Create a project or pick an existing project file to open the editor.")
+        self.label_project_hint = QLabel("Create a project or pick an existing project file to open the node canvas.")
         self.label_project_hint.setWordWrap(True)
         self.label_selected_project = QLabel("Selected project: none")
 
@@ -142,7 +142,7 @@ class OpenVisionMainWindow(QMainWindow):
         self.launch_project(self.project_files[index])
 
     def launch_project(self, project_path: Path) -> None:
-        self.editor_window = OpenVisionEditorWindow(project_path=project_path)
+        self.editor_window = NodeEditorWindow(project_path=project_path)
         self.editor_window.show()
 
     def _select_project(self, project_path: Path) -> None:
