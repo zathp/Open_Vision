@@ -1,0 +1,60 @@
+# Pylint configuration for Open Vision
+
+[MAIN]
+# Python version to target
+py-version=3.7
+
+# Files or directories to ignore
+ignore=venv,__pycache__,TMP,Projects
+
+# Use multiple processes to speed up Pylint
+jobs=0
+
+[MESSAGES CONTROL]
+# Disable specific warnings that don't align with project standards
+disable=
+    missing-module-docstring,
+    too-few-public-methods,
+    too-many-instance-attributes,
+    too-many-arguments,
+    too-many-locals,
+    fixme,
+    logging-fstring-interpolation
+
+[FORMAT]
+# Maximum line length
+max-line-length=120
+
+# String used for indentation
+indent-string='    '
+
+[DESIGN]
+# Maximum number of attributes for a class
+max-attributes=12
+
+# Maximum number of arguments for function / method
+max-args=8
+
+# Maximum number of locals for function / method body
+max-locals=20
+
+[BASIC]
+# Naming style for functions
+function-naming-style=snake_case
+
+# Naming style for classes
+class-naming-style=PascalCase
+
+# Naming style for constants
+const-naming-style=UPPER_CASE
+
+# Good variable names
+good-names=i,j,k,x,y,_,id
+
+[IMPORTS]
+# Allow wildcard imports from typing
+allow-wildcard-with-all=yes
+
+[SIMILARITIES]
+# Minimum lines of code to detect similarity
+min-similarity-lines=6

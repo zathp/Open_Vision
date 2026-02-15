@@ -18,9 +18,9 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from image_editing_ops import apply_color_mapping, build_identity_mapping, extract_unique_colors, save_images
-from image_models import ImageRecord, RgbaColor
-from Libs.pillow_compat import Image
+from OV_Libs.ImageEditingLib.image_editing_ops import apply_color_mapping, build_identity_mapping, extract_unique_colors, save_images
+from OV_Libs.ImageEditingLib.image_models import ImageRecord, RgbaColor
+from OV_Libs.pillow_compat import Image
 
 
 class OpenVisionEditorWindow(QMainWindow):
