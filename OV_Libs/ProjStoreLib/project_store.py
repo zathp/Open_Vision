@@ -64,10 +64,26 @@ from OV_Libs.constants import (
     FIELD_TO_PORT,
 )
 
-# Legacy exports for backward compatibility
-PROJECTS_DIR_NAME_COMPAT = PROJECTS_DIR_NAME
-PROJECT_EXTENSION_COMPAT = PROJECT_EXTENSION
-SCHEMA_VERSION_COMPAT = SCHEMA_VERSION
+
+def _create_node_dict(node_id: str, node_type: str, x: float, y: float) -> Dict[str, Any]:
+    """Helper to create a node dictionary with standard fields."""
+    return {
+        FIELD_NODE_ID: node_id,
+        FIELD_NODE_TYPE: node_type,
+        FIELD_NODE_X: x,
+        FIELD_NODE_Y: y,
+    }
+
+
+def _create_connection_dict(from_node: str, to_node: str, 
+                           from_port: str = PORT_OUTPUT, to_port: str = PORT_INPUT) -> Dict[str, str]:
+    """Helper to create a connection dictionary with standard fields."""
+    return {
+        FIELD_FROM_NODE: from_node,
+        FIELD_FROM_PORT: from_port,
+        FIELD_TO_NODE: to_node,
+        FIELD_TO_PORT: to_port,
+    }
 
 
 def _default_test_graph() -> Dict[str, Any]:
@@ -78,18 +94,13 @@ def _default_test_graph() -> Dict[str, Any]:
 
     return {
         FIELD_NODES: [
-            {FIELD_NODE_ID: input_id, FIELD_NODE_TYPE: NODE_TYPE_INPUT, 
-             FIELD_NODE_X: DEFAULT_INPUT_NODE_X, FIELD_NODE_Y: DEFAULT_INPUT_NODE_Y},
-            {FIELD_NODE_ID: process_id, FIELD_NODE_TYPE: NODE_TYPE_PROCESS, 
-             FIELD_NODE_X: DEFAULT_PROCESS_NODE_X, FIELD_NODE_Y: DEFAULT_PROCESS_NODE_Y},
-            {FIELD_NODE_ID: output_id, FIELD_NODE_TYPE: NODE_TYPE_OUTPUT, 
-             FIELD_NODE_X: DEFAULT_OUTPUT_NODE_X, FIELD_NODE_Y: DEFAULT_OUTPUT_NODE_Y},
+            _create_node_dict(input_id, NODE_TYPE_INPUT, DEFAULT_INPUT_NODE_X, DEFAULT_INPUT_NODE_Y),
+            _create_node_dict(process_id, NODE_TYPE_PROCESS, DEFAULT_PROCESS_NODE_X, DEFAULT_PROCESS_NODE_Y),
+            _create_node_dict(output_id, NODE_TYPE_OUTPUT, DEFAULT_OUTPUT_NODE_X, DEFAULT_OUTPUT_NODE_Y),
         ],
         FIELD_CONNECTIONS: [
-            {FIELD_FROM_NODE: input_id, FIELD_FROM_PORT: PORT_OUTPUT, 
-             FIELD_TO_NODE: process_id, FIELD_TO_PORT: PORT_INPUT},
-            {FIELD_FROM_NODE: process_id, FIELD_FROM_PORT: PORT_OUTPUT, 
-             FIELD_TO_NODE: output_id, FIELD_TO_PORT: PORT_INPUT},
+            _create_connection_dict(input_id, process_id),
+            _create_connection_dict(process_id, output_id),
         ],
     }
 
