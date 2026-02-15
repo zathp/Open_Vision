@@ -4,3 +4,4 @@
 /TMP
 /Projects/**
 !/Projects/Share/**
+*.pyc

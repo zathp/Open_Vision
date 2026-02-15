@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
 )
 
 from node_editor_window import NodeEditorWindow
-from project_store import create_project_file, list_project_files, load_project_name
+from ProjStoreLib.project_store import create_project_file, list_project_files, load_project_name
 
 
 class OpenVisionMainWindow(QMainWindow):
