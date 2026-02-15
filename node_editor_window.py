@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from ProjStoreLib.project_store import load_project_graph, save_project_graph
+from OV_Libs.ProjStoreLib.project_store import load_project_graph, save_project_graph
 
 
 class PortItem(QGraphicsEllipseItem):
