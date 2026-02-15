@@ -1,3 +1,26 @@
+"""
+Project file storage and management for Open Vision.
+
+This module handles the persistence layer for Open Vision projects,
+including creating, loading, and saving project files in the .ovproj format.
+
+The project file schema includes:
+- Project metadata (name, creation date, schema version)
+- Image paths
+- Filter stacks
+- Node graph data (nodes and connections)
+- Output presets
+
+Functions:
+    create_project_file: Create a new project file with default structure
+    list_project_files: List all project files in the Projects directory
+    load_project_name: Load just the project name from a file
+    load_project_data: Load complete project data with validation
+    save_project_data: Save project data to file
+    load_project_graph: Load node graph from project file
+    save_project_graph: Save node graph to project file
+"""
+
 import json
 import uuid
 from datetime import datetime
