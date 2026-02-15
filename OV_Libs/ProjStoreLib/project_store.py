@@ -160,7 +160,7 @@ def create_project_file(base_dir: Path, project_name: str) -> Path:
     
     # Sanitize filename - keep only alphanumeric and safe characters
     safe_name = "".join(
-        c if c.isalnum() or c in SAFE_FILENAME_CHARS else FILENAME_REPLACEMENT_CHAR 
+        c if c.isalnum() or c in SAFE_FILENAME_CHARS else FILENAME_REPLACEMENT_CHAR
         for c in project_name
     ).strip(FILENAME_REPLACEMENT_CHAR)
     
