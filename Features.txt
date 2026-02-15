@@ -12,7 +12,21 @@ Current architecture update (implemented):
 - A dedicated editor window is launched from the selected project.
 - Project files use the .ovproj format in a Projects directory.
 
+Project types:
+1) Node Graph Project (.ovproj) - Advanced node-based workflow
+   - Node-based visual chaining of filters and image merges
+   - Filter stack visualization and management
+   - Designed for complex compositing and Blender texture export
+
+2) Paint Project (.ovpaint) - MS Paint-style editing
+   - Direct image editing with tool palette interface
+   - Access to Initial_Forms tools: Downsampler, Mirror, Region Selector, Greenscreen/Color Replace
+   - Simpler, tool-based workflow for quick edits and transformations
+   - Single-image focused with layer support
+
 Expanded MVP direction (clarified):
+
+NODE GRAPH PROJECT TYPE:
 
 1) Project file scope (.ovproj)
 - Save loaded image paths.
@@ -37,8 +51,45 @@ Expanded MVP direction (clarified):
 - Generate Base Color (Albedo) output first.
 - Defer Normal, Roughness, Metallic, Height, and ORM packing until after Albedo pipeline is stable.
 
+PAINT PROJECT TYPE:
+
+1) Project file scope (.ovpaint)
+- Save current image and canvas state
+- Save active layer stack
+- Save tool settings and last-used parameters
+- Goal: quick resumption of editing session
+
+2) Tool palette MVP
+- Integration with Initial_Forms utilities:
+  - Downsampler: HSV-aware image downsampling/pixelation tool
+  - Mirror: Flip image horizontally, vertically, or diagonally
+  - Region Selector: Interactive crop with out-of-bounds transparency support
+  - Color Replace/Greenscreen: Select and replace colors with range tolerance
+- Additional paint tools:
+  - Brush/Pencil for direct pixel editing
+  - Fill bucket for color areas
+  - Eyedropper for color selection
+  - Selection tools (rectangle, lasso)
+
+3) Layer system MVP
+- Basic layer stack (create, delete, reorder, rename)
+- Layer visibility toggle
+- Flatten/merge layers
+- Export individual layers or flattened result
+
+4) Canvas behavior
+- Zoom and pan controls
+- Undo/redo stack for editing operations
+- Grid and guides (optional)
+- Direct canvas painting and tool application
+
 Proposed next additions to define soon:
-- Project versioning field for .ovproj format upgrades.
+- Project versioning field for .ovproj/.ovpaint format upgrades.
 - Missing-file handling strategy for moved/deleted source images.
 - Filter parameter schema (shared format for list mode and node mode).
 - Export naming templates and conflict policy (overwrite, suffix, or prompt).
+- Project type selector in main menu (Node Graph vs Paint)
+- Tool parameter persistence across sessions
+- Brush size, opacity, and blend mode settings
+- Custom color palette save/load
+- Keyboard shortcuts for tool switching
