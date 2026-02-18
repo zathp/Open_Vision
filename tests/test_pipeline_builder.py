@@ -10,6 +10,8 @@ Tests all core functionality of the pipeline builder module including:
 """
 
 import unittest
+import concurrent.futures
+from unittest.mock import patch
 from OV_Libs.ProjStoreLib.pipeline_builder import (
     build_dependency_map,
     calculate_pipeline_stages,
@@ -17,7 +19,8 @@ from OV_Libs.ProjStoreLib.pipeline_builder import (
     validate_pipeline,
     build_pipeline_from_graph,
     get_pipeline_summary,
-    build_update_pipeline
+    build_update_pipeline,
+    execute_pipeline,
 )
 
 
@@ -422,6 +425,192 @@ class TestGetPipelineSummary(unittest.TestCase):
         self.assertIn("Stage 0", summary)
         self.assertIn("Stage 1", summary)
         self.assertIn("Execution Order: n1 -> n2", summary)
+
+
+class TestExecutePipeline(unittest.TestCase):
+    """Test pipeline execution with sequential and parallel modes."""
+
+    def _build_sample_pipeline(self):
+        return {
+            "stages": [
+                {
+                    "stage_number": 0,
+                    "can_parallelize": False,
+                    "nodes": [
+                        {"id": "input", "type": "Input", "inputs": []}
+                    ],
+                },
+                {
+                    "stage_number": 1,
+                    "can_parallelize": True,
+                    "nodes": [
+                        {"id": "a", "type": "FilterA", "inputs": ["input"]},
+                        {"id": "b", "type": "FilterB", "inputs": ["input"]},
+                    ],
+                },
+                {
+                    "stage_number": 2,
+                    "can_parallelize": False,
+                    "nodes": [
+                        {"id": "merge", "type": "Merge", "inputs": ["a", "b"]}
+                    ],
+                },
+            ],
+            "max_stage": 2,
+            "execution_order": ["input", "a", "b", "merge"],
+        }
+
+    def test_execution_respects_stage_order(self):
+        """Ensure dependencies/stages are respected even with parallel stage nodes."""
+        pipeline = self._build_sample_pipeline()
+        call_order = []
+
+        def input_executor(node, inputs):
+            call_order.append("input")
+            return "seed"
+
+        def filter_a_executor(node, inputs):
+            call_order.append("a")
+            return f"a({inputs[0]})"
+
+        def filter_b_executor(node, inputs):
+            call_order.append("b")
+            return f"b({inputs[0]})"
+
+        def merge_executor(node, inputs):
+            call_order.append("merge")
+            return f"merge({inputs[0]},{inputs[1]})"
+
+        executors = {
+            "Input": input_executor,
+            "FilterA": filter_a_executor,
+            "FilterB": filter_b_executor,
+            "Merge": merge_executor,
+        }
+
+        results = execute_pipeline(pipeline, executors, use_threading=True)
+
+        self.assertIn("input", call_order)
+        self.assertIn("a", call_order)
+        self.assertIn("b", call_order)
+        self.assertIn("merge", call_order)
+        self.assertLess(call_order.index("input"), call_order.index("a"))
+        self.assertLess(call_order.index("input"), call_order.index("b"))
+        self.assertGreater(call_order.index("merge"), call_order.index("a"))
+        self.assertGreater(call_order.index("merge"), call_order.index("b"))
+        self.assertEqual(results["input"], "seed")
+        self.assertEqual(results["a"], "a(seed)")
+        self.assertEqual(results["b"], "b(seed)")
+        self.assertEqual(results["merge"], "merge(a(seed),b(seed))")
+
+    def test_missing_executor_raises_key_error(self):
+        """Missing node type executor should raise KeyError."""
+        pipeline = self._build_sample_pipeline()
+        executors = {
+            "Input": lambda node, inputs: "seed",
+            "FilterA": lambda node, inputs: inputs[0],
+            # FilterB intentionally missing
+            "Merge": lambda node, inputs: inputs,
+        }
+
+        with self.assertRaises(KeyError) as context:
+            execute_pipeline(pipeline, executors)
+
+        self.assertIn("No executor registered for node type", str(context.exception))
+
+    def test_executor_error_is_wrapped_with_node_context(self):
+        """Executor exceptions should be wrapped with node id context."""
+        pipeline = {
+            "stages": [
+                {
+                    "stage_number": 0,
+                    "can_parallelize": False,
+                    "nodes": [
+                        {"id": "bad-node", "type": "Bad", "inputs": []}
+                    ],
+                }
+            ],
+            "max_stage": 0,
+            "execution_order": ["bad-node"],
+        }
+
+        def bad_executor(node, inputs):
+            raise RuntimeError("boom")
+
+        with self.assertRaises(Exception) as context:
+            execute_pipeline(pipeline, {"Bad": bad_executor})
+
+        self.assertIn("Error executing node bad-node", str(context.exception))
+        self.assertIn("boom", str(context.exception))
+
+    def test_thread_pool_used_for_parallel_stage(self):
+        """Parallel stage with threading enabled should use ThreadPoolExecutor."""
+        pipeline = self._build_sample_pipeline()
+        executors = {
+            "Input": lambda node, inputs: "seed",
+            "FilterA": lambda node, inputs: f"a({inputs[0]})",
+            "FilterB": lambda node, inputs: f"b({inputs[0]})",
+            "Merge": lambda node, inputs: f"merge({inputs[0]},{inputs[1]})",
+        }
+
+        with patch("concurrent.futures.ThreadPoolExecutor", wraps=concurrent.futures.ThreadPoolExecutor) as pool_mock:
+            execute_pipeline(pipeline, executors, use_threading=True, max_workers=3)
+
+        self.assertTrue(pool_mock.called)
+        self.assertEqual(pool_mock.call_args.kwargs.get("max_workers"), 3)
+
+    def test_thread_pool_not_used_when_threading_disabled(self):
+        """Thread pool should not be used when use_threading is False."""
+        pipeline = self._build_sample_pipeline()
+        executors = {
+            "Input": lambda node, inputs: "seed",
+            "FilterA": lambda node, inputs: f"a({inputs[0]})",
+            "FilterB": lambda node, inputs: f"b({inputs[0]})",
+            "Merge": lambda node, inputs: f"merge({inputs[0]},{inputs[1]})",
+        }
+
+        with patch("concurrent.futures.ThreadPoolExecutor", wraps=concurrent.futures.ThreadPoolExecutor) as pool_mock:
+            execute_pipeline(pipeline, executors, use_threading=False)
+
+        self.assertFalse(pool_mock.called)
+
+    def test_single_node_parallel_stage_runs_sequentially(self):
+        """Single-node stage should not use thread pool even when flagged parallel."""
+        pipeline = {
+            "stages": [
+                {
+                    "stage_number": 0,
+                    "can_parallelize": True,
+                    "nodes": [
+                        {"id": "only", "type": "Only", "inputs": []}
+                    ],
+                }
+            ],
+            "max_stage": 0,
+            "execution_order": ["only"],
+        }
+        executors = {"Only": lambda node, inputs: "done"}
+
+        with patch("concurrent.futures.ThreadPoolExecutor", wraps=concurrent.futures.ThreadPoolExecutor) as pool_mock:
+            results = execute_pipeline(pipeline, executors, use_threading=True)
+
+        self.assertFalse(pool_mock.called)
+        self.assertEqual(results["only"], "done")
+
+    def test_parallel_and_sequential_modes_produce_same_results(self):
+        """Parallel and sequential execution modes should be functionally equivalent."""
+        pipeline = self._build_sample_pipeline()
+        executors = {
+            "Input": lambda node, inputs: "seed",
+            "FilterA": lambda node, inputs: f"a({inputs[0]})",
+            "FilterB": lambda node, inputs: f"b({inputs[0]})",
+            "Merge": lambda node, inputs: f"merge({inputs[0]},{inputs[1]})",
+        }
+
+        sequential_results = execute_pipeline(pipeline, executors, use_threading=False)
+        parallel_results = execute_pipeline(pipeline, executors, use_threading=True)
+
+        self.assertEqual(sequential_results, parallel_results)
 
 
 class TestBuildUpdatePipeline(unittest.TestCase):

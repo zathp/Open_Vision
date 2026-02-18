@@ -263,7 +263,7 @@ class NodeGraphBuilder:
             FIELD_CONNECTIONS: self.get_connections(),
         }
 
-    def build_pipeline(self):
+    def build_pipeline(self) -> Tuple[Dict[str, Any], bool, List[str]]:
         """Build an execution pipeline from current graph state."""
         graph = self.to_graph()
         return build_pipeline_from_graph(graph[FIELD_NODES], graph[FIELD_CONNECTIONS])

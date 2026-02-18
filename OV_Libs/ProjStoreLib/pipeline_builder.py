@@ -8,7 +8,7 @@ to a pipeline stage that is one more than the highest stage of its input nodes.
 Inspired by the Teensy Audio Library's approach to node-based processing.
 """
 
-from typing import Dict, List, Set, Tuple, Any, Iterable
+from typing import Dict, List, Set, Tuple, Any, Iterable, Optional
 
 
 def build_dependency_map(nodes: List[Dict[str, Any]], connections: List[Dict[str, str]]) -> Dict[str, List[str]]:
@@ -538,7 +538,7 @@ def execute_pipeline(
     pipeline: Dict[str, Any],
     node_executors: Dict[str, Any],
     use_threading: bool = True,
-    max_workers: int = None
+    max_workers: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Execute nodes in pipeline order with optional parallel execution.
