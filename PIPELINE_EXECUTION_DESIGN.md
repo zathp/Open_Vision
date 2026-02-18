@@ -36,18 +36,21 @@ This ensures that all dependencies are resolved before a node executes.
   "stages": [
     {
       "stage_number": 0,
+      "can_parallelize": False,
       "nodes": [
         {"id": "node-1", "type": "Image Input", "inputs": []}
       ]
     },
     {
       "stage_number": 1,
+      "can_parallelize": False,
       "nodes": [
         {"id": "node-2", "type": "Color Replace", "inputs": ["node-1"]}
       ]
     },
     {
       "stage_number": 2,
+      "can_parallelize": False,
       "nodes": [
         {"id": "node-3", "type": "Output", "inputs": ["node-2"]}
       ]
@@ -117,9 +120,9 @@ Input 1 →\
 Input 2 →/
 
 Stages:
-- Stage 0: Input 1, Input 2 (parallel)
-- Stage 1: Merge
-- Stage 2: Output
+- Stage 0: Input 1, Input 2 (can_parallelize=True, 2 nodes)
+- Stage 1: Merge (can_parallelize=False, 1 node)
+- Stage 2: Output (can_parallelize=False, 1 node)
 ```
 
 ### Example 3: Complex Multi-Path
@@ -129,11 +132,11 @@ Input 1 → Filter A →\
 Input 2 → Filter B →/
 
 Stages:
-- Stage 0: Input 1, Input 2
-- Stage 1: Filter A, Filter B (parallel)
-- Stage 2: Merge 1
-- Stage 3: Filter C
-- Stage 4: Output
+- Stage 0: Input 1, Input 2 (can_parallelize=True, 2 nodes)
+- Stage 1: Filter A, Filter B (can_parallelize=True, 2 nodes)
+- Stage 2: Merge 1 (can_parallelize=False, 1 node)
+- Stage 3: Filter C (can_parallelize=False, 1 node)
+- Stage 4: Output (can_parallelize=False, 1 node)
 ```
 
 ### Example 4: Diamond Pattern
@@ -143,10 +146,10 @@ Input →             → Merge → Output
         → Filter B →/
 
 Stages:
-- Stage 0: Input
-- Stage 1: Filter A, Filter B (parallel)
-- Stage 2: Merge
-- Stage 3: Output
+- Stage 0: Input (can_parallelize=False, 1 node)
+- Stage 1: Filter A, Filter B (can_parallelize=True, 2 nodes)
+- Stage 2: Merge (can_parallelize=False, 1 node)
+- Stage 3: Output (can_parallelize=False, 1 node)
 ```
 
 ## Implementation Functions
@@ -226,8 +229,8 @@ Stages:
 ```python
 {
   "stages": [
-    {"stage_number": 0, "nodes": [...]},
-    {"stage_number": 1, "nodes": [...]},
+    {"stage_number": 0, "can_parallelize": bool, "nodes": [...]},
+    {"stage_number": 1, "can_parallelize": bool, "nodes": [...]},
     ...
   ],
   "max_stage": int,
@@ -260,32 +263,85 @@ Stages:
 
 ---
 
-### Function 5: `execute_pipeline(pipeline, node_executors)`
-**Purpose**: Execute nodes in pipeline order
+### Function 5: `execute_pipeline(pipeline, node_executors, use_threading=True)`
+**Purpose**: Execute nodes in pipeline order with optional parallel execution
 
 **Input**:
 - `pipeline`: Execution pipeline from Function 3
 - `node_executors`: Dict mapping node types to executor functions
+- `use_threading`: Enable parallel execution for stages with multiple nodes (default: True)
 
 **Logic**:
 ```python
+import concurrent.futures
+
 results = {}
 
 for stage in pipeline["stages"]:
     stage_results = {}
     
-    # Execute all nodes in this stage (can be parallel)
-    for node in stage["nodes"]:
-        executor = node_executors[node["type"]]
-        inputs = [results[dep_id] for dep_id in node["inputs"]]
-        output = executor(node, inputs)
-        stage_results[node["id"]] = output
+    # Execute nodes in parallel if stage allows it
+    if stage["can_parallelize"] and use_threading and len(stage["nodes"]) > 1:
+        # Parallel execution using ThreadPoolExecutor
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = {}
+            for node in stage["nodes"]:
+                node_executor = node_executors[node["type"]]
+                inputs = [results[dep_id] for dep_id in node["inputs"]]
+                future = executor.submit(node_executor, node, inputs)
+                futures[future] = node["id"]
+            
+            # Collect results
+            for future in concurrent.futures.as_completed(futures):
+                node_id = futures[future]
+                stage_results[node_id] = future.result()
+    else:
+        # Sequential execution for single-node stages or when threading disabled
+        for node in stage["nodes"]:
+            executor_fn = node_executors[node["type"]]
+            inputs = [results[dep_id] for dep_id in node["inputs"]]
+            output = executor_fn(node, inputs)
+            stage_results[node["id"]] = output
     
     # Store results for next stage
     results.update(stage_results)
 
 return results
 ```
+
+---
+
+### Function 6: `build_update_pipeline(nodes, connections, updated_node_ids)`
+**Purpose**: Build a partial pipeline starting from recently updated node(s)
+
+**Input**:
+- `nodes`: List of node dictionaries
+- `connections`: List of connection dictionaries
+- `updated_node_ids`: Iterable of node IDs that changed
+
+**Output**:
+```python
+(
+  {
+    "stages": [
+      {"stage_number": 0, "nodes": [...]},
+      {"stage_number": 1, "nodes": [...]},
+      ...
+    ],
+    "max_stage": int,
+    "execution_order": ["node-id-1", "node-id-2", ...]
+  },
+  is_valid: bool,
+  errors: List[str]
+)
+```
+
+**Logic**:
+1. Normalize and validate `updated_node_ids`
+2. Traverse downstream connections to collect affected nodes
+3. Build stages from the affected subgraph
+4. Preserve full dependency inputs so cached upstream results can be reused
+5. Validate the affected subgraph only
 
 ## Error Handling
 
@@ -412,10 +468,68 @@ The Teensy Audio Library (https://github.com/PaulStoffregen/Audio) provides an e
 3. Use horizontal position as hint for stage assignment tie-breaking
 4. Support dynamic connection changes (reconnect, add, remove nodes)
 
+## Parallel Execution
+
+### Overview
+The pipeline automatically identifies stages where nodes can execute in parallel. A stage is marked as parallelizable (`can_parallelize=True`) when it contains 2 or more nodes that have no inter-dependencies within that stage.
+
+### Parallelization Rules
+
+**Stage is Parallelizable when:**
+- Stage contains 2 or more nodes
+- Nodes in the stage do not depend on each other
+- All nodes' dependencies are satisfied from previous stages
+
+**Stage is NOT Parallelizable when:**
+- Stage contains only 1 node
+- (Future: user disables parallel execution for specific node types)
+
+### Threading Model
+
+**ThreadPoolExecutor** (Default):
+- Suitable for I/O-bound operations (file loading, API calls)
+- Lower overhead than multiprocessing
+- Shares memory space (efficient for image data)
+- Limited by Python GIL for CPU-bound operations
+
+**Future Enhancement - ProcessPoolExecutor**:
+- For CPU-intensive filters (blur, transforms, complex algorithms)
+- Bypasses GIL limitations
+- Higher overhead for data serialization
+- Configurable per-node or per-stage
+
+### Performance Considerations
+
+1. **Threading Overhead**: Only beneficial when nodes have significant work
+2. **Memory Usage**: Parallel execution may increase peak memory
+3. **GIL Impact**: CPU-bound nodes may not benefit from threading
+4. **Resource Contention**: Too many threads can degrade performance
+
+### Configuration Options (Future)
+
+```python
+execution_config = {
+    "enable_parallel": True,
+    "max_workers": None,  # None = CPU count, or specify max threads
+    "threading_model": "thread",  # "thread" or "process"
+    "force_sequential_nodes": ["Output", "Video Writer"]  # Always run sequential
+}
+```
+
+### Example Parallel Execution
+
+```python
+# Stage 1 has 3 independent filter nodes - all execute in parallel
+Stage 1: [Blur Filter, Color Shift, Brightness Adjust]
+         can_parallelize=True
+         
+# These 3 filters run simultaneously on different threads
+# Results are collected before proceeding to Stage 2
+```
+
 ## Future Enhancements
 
-### Parallel Execution
-Nodes in the same stage can execute in parallel (threading/multiprocessing)
+### Caching
 
 ### Caching
 Cache node outputs to avoid recomputation when upstream doesn't change
@@ -428,6 +542,10 @@ Report progress as stages complete
 
 ### Partial Re-execution
 Only re-execute nodes affected by changes
+
+**Update Pipeline (Implemented)**:
+- `build_update_pipeline()` produces the minimal downstream pipeline from a changed node
+- Intended for image changes or parameter updates to reduce execution cost
 
 ## Testing Strategy
 

@@ -17,6 +17,7 @@ from OV_Libs.ProjStoreLib.project_store import (
     save_project_graph,
     get_projects_dir,
 )
+from OV_Libs.ProjStoreLib.node_graph_builder import NodeGraphBuilder
 
 __all__ = [
     "create_project_file",
@@ -29,4 +30,5 @@ __all__ = [
     "load_project_graph",
     "save_project_graph",
     "get_projects_dir",
+    "NodeGraphBuilder",
 ]
