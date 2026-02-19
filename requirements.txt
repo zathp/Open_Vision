@@ -1,3 +1,2 @@
-#deprecated use requirements-dev.txt instead
 Pillow
 PyQt5

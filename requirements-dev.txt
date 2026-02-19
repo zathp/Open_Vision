@@ -16,10 +16,6 @@ pytest>=7.0.0
 pytest-cov>=4.0.0
 pytest-qt>=4.0.0
 
-# Optional performance acceleration
-numpy>=1.24.0  # For mask blur acceleration (optional, falls back to PIL)
-scipy>=1.10.0  # Optional for numpy/cupy accelerated blur operations (falls back to PIL)
-
 # Documentation
 sphinx>=6.0.0
 sphinx-rtd-theme>=1.0.0
