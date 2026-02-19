@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from colorsys import rgb_to_hsv, hsv_to_rgb
-from typing import Iterable, List, Literal, Sequence, Tuple
+from typing import Any, Iterable, List, Literal, Sequence, Tuple
 
+from OV_Libs.pillow_compat import Image
 
 RgbaColor = Tuple[int, int, int, int]
 DistanceType = Literal["euclidean", "manhattan", "chebyshev"]
@@ -84,6 +85,204 @@ class ColorShiftFilter:
             if 0 <= index < len(output):
                 output[index] = self.apply_shift(output[index], options, shift_value)
         return output
+
+    def apply_color_shift_to_image(
+        self,
+        image: Any,
+        base_color: RgbaColor,
+        options: ColorShiftFilterOptions,
+        shift_value: float | Tuple[float, float, float],
+    ) -> Tuple[Any, Any]:
+        """
+        Apply color shift to an image and generate a change mask.
+        
+        Args:
+            image: PIL Image to process
+            base_color: Base color for selection
+            options: Filter options for selection and shift type
+            shift_value: The shift amount to apply
+            
+        Returns:
+            Tuple of (modified_image, change_mask):
+            - modified_image: PIL Image with colors shifted
+            - change_mask: PIL Image (RGBA) where white pixels indicate changes
+        """
+        if image.mode != "RGBA":
+            image = image.convert("RGBA")
+        
+        modified = image.copy()
+        pixels = modified.load()
+        mask_pixels = []
+        
+        width, height = image.size
+        
+        # Process each pixel
+        for y in range(height):
+            row = []
+            for x in range(width):
+                original_pixel = image.getpixel((x, y))
+                
+                # Check if this pixel's color is in the selection
+                if self._is_color_selected(
+                    original_pixel, base_color, options
+                ):
+                    # Apply the shift
+                    shifted_pixel = self.apply_shift(
+                        original_pixel, options, shift_value
+                    )
+                    pixels[x, y] = shifted_pixel
+                    # Mark as changed (white in mask)
+                    row.append((255, 255, 255, 255))
+                else:
+                    # No change, mark as black in mask
+                    row.append((0, 0, 0, 255))
+            
+            mask_pixels.extend(row)
+        
+        # Create mask image
+        mask = Image.new("RGBA", (width, height))
+        mask.putdata(mask_pixels)
+        
+        return modified, mask
+
+    def apply_color_shift_to_image_with_palette(
+        self,
+        image: Any,
+        palette: Sequence[RgbaColor],
+        mapping: Sequence[RgbaColor],
+    ) -> Tuple[Any, Any]:
+        """
+        Apply color shift using a palette mapping and generate a change mask.
+        
+        Args:
+            image: PIL Image to process
+            palette: Sequence of colors from the image
+            mapping: Mapped colors (same length as palette)
+            
+        Returns:
+            Tuple of (modified_image, change_mask):
+            - modified_image: PIL Image with colors replaced
+            - change_mask: PIL Image (RGBA) where white pixels show changes
+        """
+        if image.mode != "RGBA":
+            image = image.convert("RGBA")
+        
+        if len(palette) != len(mapping):
+            raise ValueError(
+                f"Palette and mapping must have same length: "
+                f"{len(palette)} vs {len(mapping)}"
+            )
+        
+        # Build color lookup dictionary
+        color_map = dict(zip(palette, mapping))
+        
+        modified = image.copy()
+        pixels = modified.load()
+        mask_pixels = []
+        
+        width, height = image.size
+        
+        # Process each pixel
+        for y in range(height):
+            row = []
+            for x in range(width):
+                original_color = image.getpixel((x, y))
+                
+                if original_color in color_map:
+                    new_color = color_map[original_color]
+                    pixels[x, y] = new_color
+                    # Mark as changed (white in mask)
+                    row.append((255, 255, 255, 255))
+                else:
+                    # No change
+                    row.append((0, 0, 0, 255))
+            
+            mask_pixels.extend(row)
+        
+        # Create mask image
+        mask = Image.new("RGBA", (width, height))
+        mask.putdata(mask_pixels)
+        
+        return modified, mask
+
+    def generate_change_mask(
+        self,
+        original_image: Any,
+        modified_image: Any,
+        alpha_channel: bool = True,
+    ) -> Any:
+        """
+        Generate a mask showing differences between two images.
+        
+        Args:
+            original_image: Original PIL Image
+            modified_image: Modified PIL Image
+            alpha_channel: If True, return RGBA mask; else return L (grayscale)
+            
+        Returns:
+            PIL Image mask where pixels are white where images differ
+        """
+        if original_image.size != modified_image.size:
+            raise ValueError("Images must have the same size")
+        
+        mask_pixels = []
+        width, height = original_image.size
+        
+        # Ensure both images are RGBA for comparison
+        orig = original_image.convert("RGBA") if original_image.mode != "RGBA" else original_image
+        modified = modified_image.convert("RGBA") if modified_image.mode != "RGBA" else modified_image
+        
+        orig_data = orig.load()
+        mod_data = modified.load()
+        
+        for y in range(height):
+            for x in range(width):
+                if orig_data[x, y] != mod_data[x, y]:
+                    # Pixels differ - white in mask
+                    mask_pixels.append((255, 255, 255, 255) if alpha_channel else 255)
+                else:
+                    # Pixels same - black in mask
+                    mask_pixels.append((0, 0, 0, 255) if alpha_channel else 0)
+        
+        if alpha_channel:
+            mask = Image.new("RGBA", (width, height))
+        else:
+            mask = Image.new("L", (width, height))
+        
+        mask.putdata(mask_pixels)
+        return mask
+
+    def _is_color_selected(
+        self,
+        color: RgbaColor,
+        base_color: RgbaColor,
+        options: ColorShiftFilterOptions,
+    ) -> bool:
+        """
+        Check if a color should be selected based on options.
+        
+        Args:
+            color: Color to check
+            base_color: Base color for comparison
+            options: Selection options
+            
+        Returns:
+            True if color matches selection criteria
+        """
+        if options.selection_type == "hsv_range":
+            selected = self.select_by_hsv_range([color], base_color, options.tolerance)
+        elif options.selection_type == "rgb_range":
+            selected = self.select_by_rgb_range(
+                [color], base_color, int(options.tolerance)
+            )
+        elif options.selection_type == "rgb_distance":
+            selected = self.select_by_rgb_distance(
+                [color], base_color, options.tolerance, options.distance_type
+            )
+        else:
+            return False
+        
+        return len(selected) > 0
 
     def select_by_hsv_range(
         self,

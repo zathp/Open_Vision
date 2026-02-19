@@ -1,2 +1,3 @@
+#deprecated use reruirements-dev.txt instead
 Pillow
 PyQt5
