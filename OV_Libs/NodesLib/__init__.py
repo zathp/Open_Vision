@@ -8,7 +8,9 @@ Modules:
     image_import_node: Image import node for loading images
     color_shift_node: Color shift node with mask generation
     output_node: Output node for saving images with dynamic naming
-    image_layer_node: Multi-layer image compositor node    blur_node: Blur node with multiple algorithm support"""
+    image_layer_node: Multi-layer image compositor node
+    blur_node: Blur node with multiple algorithm support
+"""
 
 from OV_Libs.NodesLib.image_import_node import (
     ImageImportNode,
@@ -44,6 +46,7 @@ from OV_Libs.NodesLib.blur_node import (
 from OV_Libs.NodesLib.mask_blur_node import (
     execute_mask_blur_node,
     create_mask_blur_node,
+    get_available_backend,
 )
 
 __all__ = [
@@ -70,4 +73,5 @@ __all__ = [
     "create_blur_node",
     "execute_mask_blur_node",
     "create_mask_blur_node",
+    "get_available_backend",
 ]

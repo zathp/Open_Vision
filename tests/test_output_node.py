@@ -341,6 +341,57 @@ class TestOutputNodeHandler(unittest.TestCase):
         # JPEG should save successfully
         saved = Image.open(output_path)
         self.assertEqual(saved.format, "JPEG")
+    
+    def test_invalid_date_format_raises_error(self):
+        """Test that invalid date format string raises ValueError."""
+        config = OutputNodeConfig(
+            output_path=str(self.temp_path / "output_{DATE:%Q}.png")  # %Q is invalid
+        )
+        handler = OutputNodeHandler(config)
+        
+        with self.assertRaises(ValueError) as ctx:
+            handler.resolve_filename()
+        
+        # Error message should mention the invalid format
+        self.assertIn("Invalid date format string", str(ctx.exception))
+        self.assertIn("%Q", str(ctx.exception))
+    
+    def test_invalid_time_format_raises_error(self):
+        """Test that invalid time format string raises ValueError."""
+        config = OutputNodeConfig(
+            output_path=str(self.temp_path / "output_{TIME:%9}.png")  # %9 is invalid
+        )
+        handler = OutputNodeHandler(config)
+        
+        with self.assertRaises(ValueError) as ctx:
+            handler.resolve_filename()
+        
+        # Error message should mention the invalid format
+        self.assertIn("Invalid time format string", str(ctx.exception))
+    
+    def test_invalid_datetime_format_raises_error(self):
+        """Test that invalid datetime format string raises ValueError."""
+        config = OutputNodeConfig(
+            output_path=str(self.temp_path / "output_{DATETIME:test%}.png")  # 'test%' is invalid
+        )
+        handler = OutputNodeHandler(config)
+        
+        with self.assertRaises(ValueError) as ctx:
+            handler.resolve_filename()
+        
+        # Error message should mention the invalid format
+        self.assertIn("Invalid datetime format string", str(ctx.exception))
+    
+    def test_valid_complex_date_format(self):
+        """Test that valid complex date formats work correctly."""
+        config = OutputNodeConfig(
+            output_path=str(self.temp_path / "output_{DATE:%Y%m%d_%H%M%S}.png")
+        )
+        handler = OutputNodeHandler(config)
+        
+        # Should not raise
+        filename = handler.resolve_filename()
+        self.assertTrue(str(filename).endswith(".png"))
 
 
 class TestOutputNodeExecutor(unittest.TestCase):
@@ -434,6 +485,139 @@ class TestOutputNodeFactory(unittest.TestCase):
         
         self.assertTrue(node["auto_increment_counter"])
         self.assertEqual(node["_counter"], 0)
+
+
+class TestOutputNodePathSecurity(unittest.TestCase):
+    """Test path validation and security features."""
+    
+    def setUp(self):
+        """Create test resources."""
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_path = Path(self.temp_dir.name)
+        self.test_image = Image.new("RGBA", (50, 50), color="blue")
+    
+    def tearDown(self):
+        """Clean up."""
+        self.temp_dir.cleanup()
+    
+    def test_path_traversal_double_dot_blocked(self):
+        """Test that ../ path traversal is blocked."""
+        config = OutputNodeConfig(
+            output_path="../../../etc/passwd"
+        )
+        handler = OutputNodeHandler(config)
+        
+        with self.assertRaises(ValueError) as ctx:
+            handler.resolve_filename()
+        
+        self.assertIn("Path traversal detected", str(ctx.exception))
+        self.assertIn("..", str(ctx.exception))
+    
+    def test_path_traversal_relative_blocked(self):
+        """Test that relative paths with .. are blocked."""
+        config = OutputNodeConfig(
+            output_path="output/../../../secret.txt"
+        )
+        handler = OutputNodeHandler(config)
+        
+        with self.assertRaises(ValueError) as ctx:
+            handler.resolve_filename()
+        
+        self.assertIn("Path traversal detected", str(ctx.exception))
+    
+    def test_base_directory_restriction_enforced(self):
+        """Test that base_directory restriction is enforced."""
+        outside_dir = self.temp_path.parent / "outside"
+        
+        config = OutputNodeConfig(
+            output_path=str(outside_dir / "file.png"),
+            base_directory=str(self.temp_path),
+        )
+        handler = OutputNodeHandler(config)
+        
+        with self.assertRaises(ValueError) as ctx:
+            handler.resolve_filename()
+        
+        self.assertIn("outside the allowed base directory", str(ctx.exception))
+    
+    def test_base_directory_allows_subdirectories(self):
+        """Test that paths within base_directory are allowed."""
+        config = OutputNodeConfig(
+            output_path=str(self.temp_path / "subdir" / "file.png"),
+            base_directory=str(self.temp_path),
+        )
+        handler = OutputNodeHandler(config)
+        
+        # Should not raise
+        result = handler.resolve_filename()
+        self.assertTrue(str(result).startswith(str(self.temp_path)))
+    
+    def test_base_directory_relative_path_allowed(self):
+        """Test that relative paths work with base_directory."""
+        config = OutputNodeConfig(
+            output_path="subdir/output.png",
+            base_directory=str(self.temp_path),
+        )
+        handler = OutputNodeHandler(config)
+        
+        # Should resolve to within base directory
+        result = handler.resolve_filename()
+        # Result should be within base directory
+        try:
+            result.relative_to(self.temp_path)
+            within_base = True
+        except ValueError:
+            within_base = False
+        
+        self.assertTrue(within_base)
+    
+    def test_normal_filename_still_works(self):
+        """Test that normal filenames still work."""
+        config = OutputNodeConfig(
+            output_path=str(self.temp_path / "normal_output.png")
+        )
+        handler = OutputNodeHandler(config)
+        
+        # Should not raise
+        result = handler.resolve_filename()
+        self.assertTrue(str(result).endswith("normal_output.png"))
+    
+    def test_filename_with_tags_still_works(self):
+        """Test that filenames with tags work with validation."""
+        config = OutputNodeConfig(
+            output_path=str(self.temp_path / "output_{DATE}_{VERSION:2}.png"),
+            version=5,
+        )
+        handler = OutputNodeHandler(config)
+        
+        # Should not raise
+        result = handler.resolve_filename()
+        self.assertIn("05", str(result))
+    
+    def test_save_with_base_directory_restriction(self):
+        """Test that save respects base_directory restriction."""
+        config = OutputNodeConfig(
+            output_path=str(self.temp_path / "safe_output.png"),
+            base_directory=str(self.temp_path),
+        )
+        handler = OutputNodeHandler(config)
+        
+        # Should successfully save
+        result = handler.save_image(self.test_image)
+        self.assertTrue(result.exists())
+        self.assertTrue(str(result).startswith(str(self.temp_path)))
+    
+    def test_base_directory_must_be_absolute(self):
+        """Test that relative base_directory is rejected."""
+        config = OutputNodeConfig(
+            output_path="output.png",
+            base_directory="relative/path",
+        )
+        
+        with self.assertRaises(ValueError) as ctx:
+            handler = OutputNodeHandler(config)
+        
+        self.assertIn("must be an absolute path", str(ctx.exception))
 
 
 class TestOutputNodeRegistry(unittest.TestCase):

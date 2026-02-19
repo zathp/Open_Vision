@@ -19,6 +19,7 @@ from OV_Libs.NodesLib.mask_blur_node import (
     MaskBlurNodeConfig,
     execute_mask_blur_node,
     create_mask_blur_node,
+    get_available_backend,
 )
 from OV_Libs.ProjStoreLib.node_executors import get_default_registry
 
@@ -461,6 +462,53 @@ class TestMaskBlurIntegration(unittest.TestCase):
         for config in configs:
             result = execute_mask_blur_node(config, [img, strength_map])
             self.assertEqual(result.size, img.size)
+
+
+class TestMaskBlurBackends(unittest.TestCase):
+    """Test mask blur backend selection and acceleration."""
+    
+    def test_get_available_backend(self):
+        """Test that backend detection works."""
+        backend = get_available_backend()
+        self.assertIn(backend, ["cupy", "numpy", "pil"])
+    
+    def test_force_pil_backend(self):
+        """Test forcing PIL backend."""
+        img = Image.new("RGBA", (50, 50), (255, 0, 0, 255))
+        strength = Image.new("RGBA", (50, 50), (128, 128, 128, 255))
+        
+        result = apply_mask_blur(
+            img, strength, blur_type="gaussian", max_radius=5, backend="pil"
+        )
+        
+        self.assertEqual(result.size, img.size)
+        self.assertEqual(result.mode, "RGBA")
+    
+    def test_invalid_backend_raises_error(self):
+        """Test that invalid backend raises error."""
+        img = Image.new("RGBA", (50, 50), (255, 0, 0, 255))
+        strength = Image.new("RGBA", (50, 50), (128, 128, 128, 255))
+        
+        with self.assertRaises(ValueError):
+            apply_mask_blur(
+                img, strength, blur_type="gaussian", max_radius=5, backend="invalid"
+            )
+    
+    def test_numpy_acceleration_if_available(self):
+        """Test NumPy backend if available."""
+        backend = get_available_backend()
+        
+        if backend in ["numpy", "cupy"]:
+            img = Image.new("RGBA", (100, 100), (255, 100, 50, 255))
+            strength = Image.new("RGBA", (100, 100), (200, 200, 200, 255))
+            
+            # Should work with auto-detected backend
+            result = apply_mask_blur(
+                img, strength, blur_type="gaussian", max_radius=10
+            )
+            
+            self.assertEqual(result.size, img.size)
+            self.assertEqual(result.mode, "RGBA")
 
 
 if __name__ == "__main__":

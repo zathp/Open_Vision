@@ -27,7 +27,7 @@ Example:
 from dataclasses import dataclass, asdict, field
 from typing import Any, Dict, List, Optional
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 
 @dataclass
@@ -243,22 +243,12 @@ class ImageLayerCompositor:
         """
         # Get current RGBA bands
         r, g, b, a = image.split()
-        
-        # Combine current alpha with mask
-        # new_alpha = current_alpha * (mask / 255.0)
+
+        # Combine current alpha with mask using native image multiplication
+        # new_alpha ≈ current_alpha * (mask / 255.0)
         mask_scaled = mask.convert("L")
-        
-        # Multiply mask values (0-255) with existing alpha
-        new_alpha = Image.new("L", image.size)
-        pixels_a = list(a.getdata())
-        pixels_mask = list(mask_scaled.getdata())
-        
-        new_pixels = [
-            int((pixels_a[i] / 255.0) * (pixels_mask[i] / 255.0) * 255)
-            for i in range(len(pixels_a))
-        ]
-        new_alpha.putdata(new_pixels)
-        
+        new_alpha = ImageChops.multiply(a, mask_scaled)
+
         # Reconstruct image
         return Image.merge("RGBA", (r, g, b, new_alpha))
     
@@ -275,15 +265,13 @@ class ImageLayerCompositor:
             RGBA PIL Image with alpha applied
         """
         r, g, b, a = image.split()
-        
-        # Scale existing alpha by new alpha: new_a = a * (alpha / 255.0)
-        pixels_a = list(a.getdata())
+
+        # Scale existing alpha by new alpha with a lookup table
+        # new_a = a * (alpha / 255.0)
         alpha_scale = alpha / 255.0
-        
-        new_pixels = [int(p * alpha_scale) for p in pixels_a]
-        new_alpha = Image.new("L", image.size)
-        new_alpha.putdata(new_pixels)
-        
+        lut = [int(value * alpha_scale) for value in range(256)]
+        new_alpha = a.point(lut)
+
         return Image.merge("RGBA", (r, g, b, new_alpha))
     
     @staticmethod
@@ -299,13 +287,11 @@ class ImageLayerCompositor:
             RGBA PIL Image with blend amount applied to alpha
         """
         r, g, b, a = image.split()
-        
-        # Scale alpha by blend amount: new_a = a * blend_amount
-        pixels_a = list(a.getdata())
-        new_pixels = [int(p * blend_amount) for p in pixels_a]
-        new_alpha = Image.new("L", image.size)
-        new_alpha.putdata(new_pixels)
-        
+
+        # Scale alpha by blend amount with a lookup table: new_a = a * blend_amount
+        lut = [int(value * blend_amount) for value in range(256)]
+        new_alpha = a.point(lut)
+
         return Image.merge("RGBA", (r, g, b, new_alpha))
 
 

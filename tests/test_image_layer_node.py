@@ -206,11 +206,7 @@ class TestImageLayerCompositor(unittest.TestCase):
         """Test mask application."""
         # Create half-opaque mask (left half opaque, right half transparent)
         mask = Image.new("L", (100, 100), 0)
-        mask_pixels = list(mask.getdata())
-        for i in range(len(mask_pixels)):
-            x = i % 100
-            mask_pixels[i] = 255 if x < 50 else 0
-        mask.putdata(mask_pixels)
+        mask.paste(255, (0, 0, 50, 100))
         
         layer = LayerInfo(image=self.overlay, mask=mask)
         result = ImageLayerCompositor.composite_layers(self.base, [layer])

@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import re
+import os
 
 from OV_Libs.pillow_compat import Image
 
@@ -41,6 +42,8 @@ class OutputNodeConfig:
         auto_increment_counter: Auto-increment counter on each save (default: False)
         create_directories: Create output directories if they don't exist (default: True)
         overwrite: Overwrite existing files (default: False)
+        base_directory: Optional base directory to restrict outputs (None = no restriction)
+                       If set, validated paths must be within this directory tree
     """
     output_path: str = "output.png"
     save_format: str = "PNG"
@@ -49,6 +52,7 @@ class OutputNodeConfig:
     auto_increment_counter: bool = False
     create_directories: bool = True
     overwrite: bool = False
+    base_directory: Optional[str] = None
     _counter: int = 0  # Internal counter state
     
     def to_dict(self) -> Dict[str, Any]:
@@ -58,9 +62,13 @@ class OutputNodeConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "OutputNodeConfig":
         """Create from dictionary."""
-        # Filter out internal fields
-        filtered = {k: v for k, v in data.items() 
-                   if k in cls.__dataclass_fields__ and not k.startswith('_')}
+        # Filter out most internal fields, but allow known persisted state
+        filtered = {
+            k: v
+            for k, v in data.items()
+            if k in cls.__dataclass_fields__
+            and (not k.startswith('_') or k == "_counter")
+        }
         return cls(**filtered)
     
     def get_save_kwargs(self) -> Dict[str, Any]:
@@ -96,13 +104,23 @@ class OutputNodeHandler:
     def __init__(self, config: OutputNodeConfig):
         """Initialize handler with configuration."""
         self.config = config
+        # Resolve and validate base directory if provided
+        self._base_dir = None
+        if config.base_directory:
+            base_path = Path(config.base_directory)
+            if not base_path.is_absolute():
+                raise ValueError(f"base_directory must be an absolute path: {config.base_directory}")
+            self._base_dir = base_path.resolve()
     
     def resolve_filename(self) -> Path:
         """
-        Resolve the output filename with tag substitution.
+        Resolve the output filename with tag substitution and path validation.
         
         Returns:
             Path to the resolved output file
+            
+        Raises:
+            ValueError: If path contains traversal sequences or is outside base_directory
         """
         filename = self.config.output_path
         
@@ -113,7 +131,59 @@ class OutputNodeHandler:
         filename = self._replace_version(filename)
         filename = self._replace_counter(filename)
         
-        return Path(filename)
+        # Validate and sanitize the path
+        validated_path = self._validate_output_path(filename)
+        
+        return validated_path
+    
+    def _validate_output_path(self, path_str: str) -> Path:
+        """
+        Validate output path to prevent directory traversal attacks.
+        
+        Args:
+            path_str: Path string to validate
+            
+        Returns:
+            Validated Path object
+            
+        Raises:
+            ValueError: If path contains dangerous sequences or is outside base_directory
+        """
+        # Create Path object  
+        path = Path(path_str)
+        
+        # Check for potentially dangerous path components
+        parts = path.parts
+        for part in parts:
+            # Check for parent directory references
+            if part == "..":
+                raise ValueError(
+                    f"Path traversal detected: output_path contains '..': {path_str}"
+                )
+        
+        # Resolve the path
+        if path.is_absolute():
+            resolved_path = path.resolve()
+        else:
+            # For relative paths with base_directory, resolve relative to base
+            if self._base_dir:
+                resolved_path = (self._base_dir / path).resolve()
+            else:
+                # Otherwise resolve relative to current directory
+                resolved_path = path.resolve()
+        
+        # If base_directory is set, ensure the resolved path is within it
+        if self._base_dir:
+            try:
+                # Check if resolved path is relative to base directory
+                resolved_path.relative_to(self._base_dir)
+            except ValueError:
+                raise ValueError(
+                    f"Security: output_path '{path_str}' resolves to '{resolved_path}' "
+                    f"which is outside the allowed base directory '{self._base_dir}'"
+                )
+        
+        return resolved_path
     
     def save_image(self, image: Any) -> Path:
         """
@@ -167,7 +237,12 @@ class OutputNodeHandler:
         """Replace {DATETIME} tags."""
         def replacer(match):
             fmt = match.group(1) or self.DEFAULT_DATETIME_FORMAT
-            return datetime.now().strftime(fmt)
+            try:
+                return datetime.now().strftime(fmt)
+            except (ValueError, TypeError) as e:
+                raise ValueError(
+                    f"Invalid datetime format string '{fmt}' in {{DATETIME}} tag: {str(e)}"
+                )
         
         return re.sub(self.DATETIME_PATTERN, replacer, text, flags=re.IGNORECASE)
     
@@ -175,7 +250,12 @@ class OutputNodeHandler:
         """Replace {DATE} tags."""
         def replacer(match):
             fmt = match.group(1) or self.DEFAULT_DATE_FORMAT
-            return datetime.now().strftime(fmt)
+            try:
+                return datetime.now().strftime(fmt)
+            except (ValueError, TypeError) as e:
+                raise ValueError(
+                    f"Invalid date format string '{fmt}' in {{DATE}} tag: {str(e)}"
+                )
         
         return re.sub(self.DATE_PATTERN, replacer, text, flags=re.IGNORECASE)
     
@@ -183,7 +263,12 @@ class OutputNodeHandler:
         """Replace {TIME} tags."""
         def replacer(match):
             fmt = match.group(1) or self.DEFAULT_TIME_FORMAT
-            return datetime.now().strftime(fmt)
+            try:
+                return datetime.now().strftime(fmt)
+            except (ValueError, TypeError) as e:
+                raise ValueError(
+                    f"Invalid time format string '{fmt}' in {{TIME}} tag: {str(e)}"
+                )
         
         return re.sub(self.TIME_PATTERN, replacer, text, flags=re.IGNORECASE)
     

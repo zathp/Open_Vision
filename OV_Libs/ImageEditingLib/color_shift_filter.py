@@ -111,16 +111,17 @@ class ColorShiftFilter:
             image = image.convert("RGBA")
         
         modified = image.copy()
-        pixels = modified.load()
-        mask_pixels = []
+        source_pixels = image.load()
+        modified_pixels = modified.load()
         
         width, height = image.size
+        mask = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+        mask_pixels = mask.load()
         
         # Process each pixel
         for y in range(height):
-            row = []
             for x in range(width):
-                original_pixel = image.getpixel((x, y))
+                original_pixel = source_pixels[x, y]
                 
                 # Check if this pixel's color is in the selection
                 if self._is_color_selected(
@@ -130,18 +131,9 @@ class ColorShiftFilter:
                     shifted_pixel = self.apply_shift(
                         original_pixel, options, shift_value
                     )
-                    pixels[x, y] = shifted_pixel
+                    modified_pixels[x, y] = shifted_pixel
                     # Mark as changed (white in mask)
-                    row.append((255, 255, 255, 255))
-                else:
-                    # No change, mark as black in mask
-                    row.append((0, 0, 0, 255))
-            
-            mask_pixels.extend(row)
-        
-        # Create mask image
-        mask = Image.new("RGBA", (width, height))
-        mask.putdata(mask_pixels)
+                    mask_pixels[x, y] = (255, 255, 255, 255)
         
         return modified, mask
 
@@ -177,31 +169,23 @@ class ColorShiftFilter:
         color_map = dict(zip(palette, mapping))
         
         modified = image.copy()
-        pixels = modified.load()
-        mask_pixels = []
+        source_pixels = image.load()
+        modified_pixels = modified.load()
         
         width, height = image.size
+        mask = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+        mask_pixels = mask.load()
         
         # Process each pixel
         for y in range(height):
-            row = []
             for x in range(width):
-                original_color = image.getpixel((x, y))
+                original_color = source_pixels[x, y]
                 
                 if original_color in color_map:
                     new_color = color_map[original_color]
-                    pixels[x, y] = new_color
+                    modified_pixels[x, y] = new_color
                     # Mark as changed (white in mask)
-                    row.append((255, 255, 255, 255))
-                else:
-                    # No change
-                    row.append((0, 0, 0, 255))
-            
-            mask_pixels.extend(row)
-        
-        # Create mask image
-        mask = Image.new("RGBA", (width, height))
-        mask.putdata(mask_pixels)
+                    mask_pixels[x, y] = (255, 255, 255, 255)
         
         return modified, mask
 
