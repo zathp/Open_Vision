@@ -1,5 +1,8 @@
 """
-Blur Filter Operations and Blur Node.
+Blur Filter Operations.
+
+Provides core blur filter functions and configuration.
+Node execution logic is in OV_Libs/NodesLib/blur_node.py.
 
 Provides multiple blur algorithms:
 - Gaussian blur: Natural smooth blur with circular falloff
@@ -338,100 +341,7 @@ class BlurNodeConfig:
         return cls(**filtered)
 
 
-def execute_blur_node(node: Dict[str, Any], inputs: List[Any]) -> Any:
-    """
-    Execute blur node.
-    
-    Node dict should contain:
-        - 'blur_type': Type of blur ('gaussian', 'box', 'motion', 'radial')
-        - Appropriate parameters for chosen blur type
-        
-    Inputs:
-        - [0]: Image to blur (PIL Image)
-        
-    Returns:
-        Blurred PIL Image
-        
-    Raises:
-        ValueError: If no input or invalid blur type
-        TypeError: If input not PIL Image
-    """
-    if not inputs or len(inputs) < 1:
-        raise ValueError("BlurNode requires image input")
-    
-    image = inputs[0]
-    if not hasattr(image, "filter"):
-        raise TypeError(f"Expected PIL Image, got {type(image)}")
-    
-    blur_type = node.get("blur_type", "gaussian").lower()
-    
-    if blur_type == "gaussian":
-        radius = float(node.get("gaussian_radius", 5.0))
-        return apply_gaussian_blur(image, radius)
-    
-    elif blur_type == "box":
-        kernel = int(node.get("box_kernel", 3))
-        return apply_box_blur(image, kernel)
-    
-    elif blur_type == "motion":
-        angle = float(node.get("motion_angle", 0.0))
-        distance = int(node.get("motion_distance", 10))
-        return apply_motion_blur(image, angle, distance)
-    
-    elif blur_type == "radial":
-        center_x = node.get("radial_center_x")
-        center_y = node.get("radial_center_y")
-        strength = float(node.get("radial_strength", 5.0))
-        return apply_radial_blur(image, center_x, center_y, strength)
-    
-    else:
-        raise ValueError(
-            f"Unknown blur_type: {blur_type}. "
-            f"Valid types: gaussian, box, motion, radial"
-        )
-
-
-def create_blur_node(
-    node_id: str,
-    blur_type: str = "gaussian",
-    **blur_params: Any,
-) -> Dict[str, Any]:
-    """
-    Create blur node for graph.
-    
-    Args:
-        node_id: Unique node identifier
-        blur_type: Type of blur ('gaussian', 'box', 'motion', 'radial')
-        **blur_params: Blur-specific parameters:
-                      - Gaussian: gaussian_radius (0-100)
-                      - Box: box_kernel (1-101, odd)
-                      - Motion: motion_angle (0-360), motion_distance (1-100)
-                      - Radial: radial_center_x, radial_center_y, radial_strength (1-50)
-        
-    Returns:
-        Node dict for graph
-        
-    Example:
-        >>> # Gaussian blur
-        >>> node1 = create_blur_node("blur-1", "gaussian", gaussian_radius=15)
-        >>> 
-        >>> # Motion blur
-        >>> node2 = create_blur_node(
-        ...     "blur-2",
-        ...     "motion",
-        ...     motion_angle=45,
-        ...     motion_distance=30,
-        ... )
-        >>> 
-        >>> # Radial blur
-        >>> node3 = create_blur_node("blur-3", "radial", radial_strength=10)
-    """
-    node = {
-        "id": node_id,
-        "type": "Blur",
-        "blur_type": blur_type,
-    }
-    
-    # Add blur-specific parameters
-    node.update(blur_params)
-    return node
+# Note: Blur node execution logic (execute_blur_node and create_blur_node) has been
+# moved to OV_Libs/NodesLib/blur_node.py to avoid duplication and follow the
+# architecture pattern where ImageEditingLib contains core filter functions and
+# NodesLib contains node execution logic. See BUILDING_NEW_FILTERS.md for details.
