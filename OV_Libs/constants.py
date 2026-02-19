@@ -78,3 +78,11 @@ NODE_TYPE_INPUT = "Test Input"
 NODE_TYPE_PROCESS = "Test Process"
 NODE_TYPE_OUTPUT = "Test Output"
 NODE_TYPE_DEFAULT = "Test Node"
+
+# Image import node type
+NODE_TYPE_IMAGE_IMPORT = "Image Import"
+
+# Supported file formats
+SUPPORTED_STANDARD_IMAGES = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".webp"}
+SUPPORTED_MOVIES = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+SUPPORTED_GIF = {".gif"}
