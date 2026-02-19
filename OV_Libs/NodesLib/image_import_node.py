@@ -23,12 +23,12 @@ from OV_Libs.pillow_compat import Image
 
 
 # Supported file extensions
-STANDARD_IMAGE_FORMATS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".webp"}
+STANDARD_IMAGE_FORMATS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".webp"}
 MOVIE_FORMATS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}  # For future implementation
 GIF_FORMAT = {".gif"}  # Can be static image or animated sequence
 
 # File filter patterns for QFileDialog
-STANDARD_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.webp)"
+STANDARD_IMAGE_FILTER = "Images (*.png *.jpg *.jpeg *.bmp *.tiff *.webp)"
 MOVIE_FILTER = "Movies (*.mp4 *.avi *.mov *.mkv *.webm)"
 GIF_FILTER = "GIF Files (*.gif)"
 ALL_SUPPORTED_FILTER = "All Supported Files (*.png *.jpg *.jpeg *.bmp *.gif *.tiff *.webp *.mp4 *.avi *.mov *.mkv *.webm)"
