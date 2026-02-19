@@ -116,6 +116,7 @@ Additional documentation available:
 - [Features Overview](Features.txt)
 - [TODO Roadmap](OPEN_VISION_TODO.md)
 - [Feature Specifications](OPEN_VISION_FEATURES.md)
+- [Building New Filters](BUILDING_NEW_FILTERS.md)
 - [Pipeline Design](PIPELINE_EXECUTION_DESIGN.md)
 - [Paint Project Design](PAINT_PROJECT_DESIGN.md)
 
