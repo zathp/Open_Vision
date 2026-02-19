@@ -434,5 +434,4 @@ def create_blur_node(
     
     # Add blur-specific parameters
     node.update(blur_params)
-    \
     return node
