@@ -50,6 +50,8 @@ class NodeExecutorRegistry:
         input_count: int = 0,
         output_count: int = 1,
         tags: Optional[List[str]] = None,
+        input_ports: Optional[List[str]] = None,
+        output_ports: Optional[List[str]] = None,
     ) -> None:
         """
         Register a node executor.
@@ -61,6 +63,8 @@ class NodeExecutorRegistry:
             input_count: Expected number of inputs (0 for source nodes)
             output_count: Expected number of outputs (usually 1)
             tags: Optional list of tags for categorization (e.g., ["input", "image"])
+            input_ports: Optional input port names (length should match input_count)
+            output_ports: Optional output port names (length should match output_count)
             
         Raises:
             ValueError: If node_type is empty or executor is not callable
@@ -87,6 +91,11 @@ class NodeExecutorRegistry:
             "output_count": int(output_count),
             "tags": list(tags) if tags else [],
         }
+
+        if input_ports is not None:
+            self._node_metadata[node_type]["input_ports"] = [str(port) for port in input_ports]
+        if output_ports is not None:
+            self._node_metadata[node_type]["output_ports"] = [str(port) for port in output_ports]
         
         logger.debug(f"Registered executor for node type: {node_type}")
     
@@ -315,6 +324,7 @@ def register_default_executors(registry: NodeExecutorRegistry) -> None:
         input_count=1,
         output_count=2,
         tags=["processing", "color", "filter"],
+        output_ports=["image", "mask"],
     )
     
     registry.register(

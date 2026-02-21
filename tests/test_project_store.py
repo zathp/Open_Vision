@@ -106,6 +106,17 @@ class TestCreateProjectFile:
             assert "filter_stacks" in data
             assert "node_graph" in data
             assert "output_presets" in data
+
+    def test_creates_empty_node_graph(self):
+        """Should create projects with no pre-populated nodes/connections."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+            project_path = create_project_file(base_dir, "Empty Graph")
+
+            data = json.loads(project_path.read_text())
+            node_graph = data.get("node_graph", {})
+            assert node_graph.get("nodes", []) == []
+            assert node_graph.get("connections", []) == []
             
     def test_sanitizes_filename(self):
         """Should sanitize special characters in project name."""

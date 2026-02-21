@@ -1,21 +1,22 @@
 from dataclasses import dataclass
 from colorsys import rgb_to_hsv, hsv_to_rgb
-from typing import Any, Iterable, List, Literal, Sequence, Tuple
+from typing import Any, Iterable, List, Literal, Optional, Sequence, Tuple
 
 from OV_Libs.pillow_compat import Image
 
 RgbaColor = Tuple[int, int, int, int]
 DistanceType = Literal["euclidean", "manhattan", "chebyshev"]
 SelectionType = Literal["hsv_range", "rgb_range", "rgb_distance"]
-ShiftType = Literal["percentile_rgb", "percentile_hsv", "absolute_rgb", "absolute_hsv"]
+ShiftType = Literal["percentile_rgb", "percentile_hsv", "absolute_rgb", "absolute_hsv", "match_distance_rgb"]
 
 
 @dataclass(frozen=True)
 class ColorShiftFilterOptions:
     selection_type: SelectionType
     shift_type: ShiftType
-    tolerance: float = 30.0
+    tolerance: float | Tuple[float, float, float] = 30.0
     distance_type: DistanceType = "euclidean"
+    output_base_color: Optional[RgbaColor] = None
 
 
 class ColorShiftFilter:
@@ -31,12 +32,12 @@ class ColorShiftFilter:
         if options.selection_type == "hsv_range":
             selected = self.select_by_hsv_range(colors, base_color, options.tolerance)
         elif options.selection_type == "rgb_range":
-            selected = self.select_by_rgb_range(colors, base_color, int(options.tolerance))
+            selected = self.select_by_rgb_range(colors, base_color, int(self._scalar_tolerance(options.tolerance)))
         elif options.selection_type == "rgb_distance":
             selected = self.select_by_rgb_distance(
                 colors,
                 base_color,
-                options.tolerance,
+                self._scalar_tolerance(options.tolerance),
                 options.distance_type,
             )
         else:
@@ -49,29 +50,51 @@ class ColorShiftFilter:
         self,
         color: RgbaColor,
         options: ColorShiftFilterOptions,
-        shift_value: float | Tuple[float, float, float],
+        shift_value: float | Sequence[float],
     ) -> RgbaColor:
         if options.shift_type == "percentile_rgb":
-            if isinstance(shift_value, tuple):
-                return self.apply_percentile_shift_rgb(color, shift_value)
-            return self.apply_percentile_shift_rgb(color, (shift_value, shift_value, shift_value))
+            shift_tuple = self._triplet_shift_value(shift_value, scalar_default="rgb")
+            return self.apply_percentile_shift_rgb(color, shift_tuple)
 
         if options.shift_type == "percentile_hsv":
-            if isinstance(shift_value, tuple):
-                return self.apply_percentile_shift_hsv(color, shift_value)
-            return self.apply_percentile_shift_hsv(color, (0.0, shift_value, shift_value))
+            shift_tuple = self._triplet_shift_value(shift_value, scalar_default="hsv")
+            return self.apply_percentile_shift_hsv(color, shift_tuple)
 
         if options.shift_type == "absolute_rgb":
-            if isinstance(shift_value, tuple):
-                return self.apply_absolute_shift_rgb(color, shift_value)
-            return self.apply_absolute_shift_rgb(color, (shift_value, shift_value, shift_value))
+            shift_tuple = self._triplet_shift_value(shift_value, scalar_default="rgb")
+            return self.apply_absolute_shift_rgb(color, shift_tuple)
 
         if options.shift_type == "absolute_hsv":
-            if isinstance(shift_value, tuple):
-                return self.apply_absolute_shift_hsv(color, shift_value)
-            return self.apply_absolute_shift_hsv(color, (0.0, shift_value, shift_value))
+            shift_tuple = self._triplet_shift_value(shift_value, scalar_default="hsv")
+            return self.apply_absolute_shift_hsv(color, shift_tuple)
+
+        if options.shift_type == "match_distance_rgb":
+            if options.output_base_color is None:
+                return color
+            return color
 
         raise ValueError(f"Unsupported shift type: {options.shift_type}")
+
+    def _triplet_shift_value(
+        self,
+        shift_value: float | Sequence[float],
+        scalar_default: Literal["rgb", "hsv"] = "rgb",
+    ) -> Tuple[float, float, float]:
+        if isinstance(shift_value, Sequence) and not isinstance(shift_value, (str, bytes)):
+            values = [float(value) for value in shift_value]
+            if not values:
+                return 0.0, 0.0, 0.0
+            if len(values) == 1:
+                value = values[0]
+                return value, value, value
+            if len(values) == 2:
+                return values[0], values[1], values[1]
+            return values[0], values[1], values[2]
+
+        value = float(shift_value)
+        if scalar_default == "hsv":
+            return 0.0, value, value
+        return value, value, value
 
     def shift_selected_colors(
         self,
@@ -128,9 +151,17 @@ class ColorShiftFilter:
                     original_pixel, base_color, options
                 ):
                     # Apply the shift
-                    shifted_pixel = self.apply_shift(
-                        original_pixel, options, shift_value
-                    )
+                    if options.shift_type == "match_distance_rgb":
+                        output_base = options.output_base_color if options.output_base_color is not None else base_color
+                        shifted_pixel = self.apply_match_distance_rgb(
+                            original_pixel,
+                            base_color,
+                            output_base,
+                        )
+                    else:
+                        shifted_pixel = self.apply_shift(
+                            original_pixel, options, shift_value
+                        )
                     modified_pixels[x, y] = shifted_pixel
                     # Mark as changed (white in mask)
                     mask_pixels[x, y] = (255, 255, 255, 255)
@@ -257,11 +288,11 @@ class ColorShiftFilter:
             selected = self.select_by_hsv_range([color], base_color, options.tolerance)
         elif options.selection_type == "rgb_range":
             selected = self.select_by_rgb_range(
-                [color], base_color, int(options.tolerance)
+                [color], base_color, int(self._scalar_tolerance(options.tolerance))
             )
         elif options.selection_type == "rgb_distance":
             selected = self.select_by_rgb_distance(
-                [color], base_color, options.tolerance, options.distance_type
+                [color], base_color, self._scalar_tolerance(options.tolerance), options.distance_type
             )
         else:
             return False
@@ -272,12 +303,14 @@ class ColorShiftFilter:
         self,
         colors: Sequence[RgbaColor],
         base_color: RgbaColor,
-        tolerance: float,
+        tolerance: float | Sequence[float],
     ) -> List[RgbaColor]:
         base_h, base_s, base_v = self._rgb_to_hsv_255(base_color)
+        hue_raw, sat_raw, val_raw = self._triplet_tolerance(tolerance)
 
-        hue_tolerance = max(0.0, min(180.0, tolerance)) / 360.0
-        sv_tolerance = max(0.0, min(255.0, tolerance)) / 255.0
+        hue_tolerance = max(0.0, min(180.0, hue_raw)) / 360.0
+        sat_tolerance = max(0.0, min(255.0, sat_raw)) / 255.0
+        val_tolerance = max(0.0, min(255.0, val_raw)) / 255.0
 
         selected: List[RgbaColor] = []
         for color in colors:
@@ -285,11 +318,30 @@ class ColorShiftFilter:
             hue_distance = min(abs(hue - base_h), 1.0 - abs(hue - base_h))
             if (
                 hue_distance <= hue_tolerance
-                and abs(sat - base_s) <= sv_tolerance
-                and abs(value - base_v) <= sv_tolerance
+                and abs(sat - base_s) <= sat_tolerance
+                and abs(value - base_v) <= val_tolerance
             ):
                 selected.append(color)
         return selected
+
+    def _triplet_tolerance(self, tolerance: float | Sequence[float]) -> Tuple[float, float, float]:
+        if isinstance(tolerance, Sequence) and not isinstance(tolerance, (str, bytes)):
+            raw_values = [float(value) for value in tolerance]
+            if not raw_values:
+                return 0.0, 0.0, 0.0
+            if len(raw_values) == 1:
+                value = raw_values[0]
+                return value, value, value
+            if len(raw_values) == 2:
+                return raw_values[0], raw_values[1], raw_values[1]
+            return raw_values[0], raw_values[1], raw_values[2]
+
+        value = float(tolerance)
+        return value, value, value
+
+    def _scalar_tolerance(self, tolerance: float | Sequence[float]) -> float:
+        triplet = self._triplet_tolerance(tolerance)
+        return max(triplet)
 
     def select_by_rgb_range(
         self,
@@ -381,6 +433,23 @@ class ColorShiftFilter:
 
         rr, gg, bb = hsv_to_rgb(h, s, v)
         return (int(round(rr * 255)), int(round(gg * 255)), int(round(bb * 255)), a)
+
+    def apply_match_distance_rgb(
+        self,
+        color: RgbaColor,
+        source_base_color: RgbaColor,
+        output_base_color: RgbaColor,
+    ) -> RgbaColor:
+        sr, sg, sb, sa = source_base_color
+        tr, tg, tb, ta = output_base_color
+        r, g, b, a = color
+
+        return (
+            self._clamp_byte(tr + (r - sr)),
+            self._clamp_byte(tg + (g - sg)),
+            self._clamp_byte(tb + (b - sb)),
+            self._clamp_byte(ta + (a - sa)),
+        )
 
     def _rgb_distance(self, a: RgbaColor, b: RgbaColor, distance_type: DistanceType) -> float:
         ar, ag, ab, _ = a

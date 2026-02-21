@@ -38,10 +38,11 @@ class ColorShiftNodeConfig:
         base_color_a: Alpha component of base color (0-255, default 255)
         selection_type: How to select colors - 'hsv_range', 'rgb_range', 'rgb_distance'
         shift_type: How to shift colors - 'percentile_rgb', 'percentile_hsv', 
-                   'absolute_rgb', 'absolute_hsv'
-        tolerance: Tolerance for color selection (0-255 or 0-100 depending on selection)
+               'absolute_rgb', 'absolute_hsv', 'match_distance_rgb'
+        tolerance: Tolerance for color selection. Can be a scalar or HSV triplet (H, S, V)
         distance_type: Distance metric for 'rgb_distance' - 'euclidean', 'manhattan', 'chebyshev'
         shift_amount: Amount to shift (can be float or tuple of 3 floats for RGB/HSV)
+        output_color_r/g/b/a: Output base color used by 'match_distance_rgb'
         output_mask: If True, return (image, mask) tuple; else just image
     """
     base_color_r: int = 0
@@ -50,9 +51,13 @@ class ColorShiftNodeConfig:
     base_color_a: int = 255
     selection_type: SelectionType = "rgb_distance"
     shift_type: ShiftType = "absolute_rgb"
-    tolerance: float = 30.0
+    tolerance: float | Tuple[float, float, float] = 30.0
     distance_type: DistanceType = "euclidean"
-    shift_amount: float = 50.0
+    shift_amount: float | Tuple[float, float, float] = 50.0
+    output_color_r: int = 0
+    output_color_g: int = 0
+    output_color_b: int = 0
+    output_color_a: int = 255
     output_mask: bool = True
     
     def to_dict(self) -> Dict[str, Any]:
@@ -62,7 +67,11 @@ class ColorShiftNodeConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ColorShiftNodeConfig":
         """Create from dictionary."""
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+        normalized = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        shift_amount = normalized.get("shift_amount")
+        if isinstance(shift_amount, list):
+            normalized["shift_amount"] = tuple(shift_amount[:3])
+        return cls(**normalized)
     
     def get_base_color(self) -> RgbaColor:
         """Get the base color as RGBA tuple."""
@@ -80,6 +89,12 @@ class ColorShiftNodeConfig:
             shift_type=self.shift_type,
             tolerance=self.tolerance,
             distance_type=self.distance_type,
+            output_base_color=(
+                int(max(0, min(255, self.output_color_r))),
+                int(max(0, min(255, self.output_color_g))),
+                int(max(0, min(255, self.output_color_b))),
+                int(max(0, min(255, self.output_color_a))),
+            ),
         )
 
 
@@ -140,11 +155,12 @@ def execute_color_shift_node(node: Dict[str, Any], inputs: List[Any]) -> Any:
 def create_color_shift_node(
     node_id: str,
     base_color: RgbaColor,
-    shift_amount: float,
+    shift_amount: float | Tuple[float, float, float],
     selection_type: SelectionType = "rgb_distance",
     shift_type: ShiftType = "absolute_rgb",
     tolerance: float = 30.0,
     distance_type: DistanceType = "euclidean",
+    output_base_color: Optional[RgbaColor] = None,
     output_mask: bool = True,
 ) -> Dict[str, Any]:
     """
@@ -164,10 +180,12 @@ def create_color_shift_node(
         Node dictionary ready for graph serialization
     """
     r, g, b, a = base_color
+    out_r, out_g, out_b, out_a = output_base_color if output_base_color is not None else base_color
     
     return {
         "id": node_id,
         "type": "Color Shift",
+        "output_ports": ["image", "mask"],
         "base_color_r": r,
         "base_color_g": g,
         "base_color_b": b,
@@ -177,5 +195,9 @@ def create_color_shift_node(
         "tolerance": tolerance,
         "distance_type": distance_type,
         "shift_amount": shift_amount,
+        "output_color_r": out_r,
+        "output_color_g": out_g,
+        "output_color_b": out_b,
+        "output_color_a": out_a,
         "output_mask": output_mask,
     }

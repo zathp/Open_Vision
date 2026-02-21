@@ -11,22 +11,75 @@ Inspired by the Teensy Audio Library's approach to node-based processing.
 from typing import Dict, List, Set, Tuple, Any, Iterable, Optional
 
 
+def _extract_output_by_port(node_result: Any, output_port: str, output_index: int = 0) -> Any:
+    """
+    Extract a specific output from a node result based on port name.
+    
+    Handles nodes with multiple outputs that return tuples. The output_index indicates
+    which position in the tuple corresponds to this output port (based on order of output_ports).
+    
+    Args:
+        node_result: The result from node execution (single value or tuple)
+        output_port: Name of the output port (e.g., "output", "output_0", "output_1")
+        output_index: Position if result is a tuple (0-based)
+        
+    Returns:
+        The appropriate element from node_result
+    """
+    # If result is a tuple, extract the indexed element
+    if isinstance(node_result, tuple):
+        if output_index < len(node_result):
+            return node_result[output_index]
+        raise IndexError(f"Output index {output_index} out of range for tuple of length {len(node_result)}")
+    
+    # For single outputs, only return if index is 0
+    if output_index == 0:
+        return node_result
+    
+    raise IndexError(f"Output index {output_index} out of range for single-valued result")
+
+
+def _resolve_output_index(from_port: str, source_node: Optional[Dict[str, Any]]) -> int:
+    """Resolve an output tuple index from a port name and optional source-node metadata."""
+    output_ports_raw = source_node.get("output_ports") if isinstance(source_node, dict) else None
+    if isinstance(output_ports_raw, list):
+        output_ports = [str(port) for port in output_ports_raw]
+        if from_port in output_ports:
+            return output_ports.index(from_port)
+
+    if from_port.startswith("output_"):
+        try:
+            return int(from_port.split("_")[1])
+        except (ValueError, IndexError):
+            return 0
+
+    return 0
+
+
 def build_dependency_map(nodes: List[Dict[str, Any]], connections: List[Dict[str, str]]) -> Dict[str, List[str]]:
     """
     Build a mapping of each node to its input dependencies.
     
+    Preserves multiple connections from the same source node to different input ports
+    of the same destination node, allowing executors to receive duplicate inputs
+    (e.g., Mask Blur uses the same image for both image and strength_map).
+    
     Args:
         nodes: List of node dictionaries with 'id' keys
-        connections: List of connection dictionaries with 'from_node' and 'to_node' keys
+        connections: List of connection dictionaries with 'from_node', 'to_node', 'from_port', 'to_port' keys
     
     Returns:
-        Dictionary mapping node_id -> list of input node_ids
+        Dictionary mapping node_id -> list of input node_ids (may contain duplicates)
         
     Example:
         >>> nodes = [{"id": "n1"}, {"id": "n2"}, {"id": "n3"}]
-        >>> connections = [{"from_node": "n1", "to_node": "n2"}, {"from_node": "n2", "to_node": "n3"}]
+        >>> connections = [
+        ...     {"from_node": "n1", "to_node": "n2", "to_port": "in0"},
+        ...     {"from_node": "n1", "to_node": "n2", "to_port": "in1"},  # Same source, different port
+        ...     {"from_node": "n2", "to_node": "n3"}
+        ... ]
         >>> build_dependency_map(nodes, connections)
-        {'n1': [], 'n2': ['n1'], 'n3': ['n2']}
+        {'n1': [], 'n2': ['n1', 'n1'], 'n3': ['n2']}
     """
     # Initialize all nodes with empty dependency lists
     dependencies: Dict[str, List[str]] = {}
@@ -35,15 +88,16 @@ def build_dependency_map(nodes: List[Dict[str, Any]], connections: List[Dict[str
         if node_id:
             dependencies[node_id] = []
     
-    # Build dependency map from connections
+    # Build dependency map from connections, preserving duplicate connections
+    # to allow multi-input nodes (e.g., Mask Blur needing same image for multiple ports)
     for connection in connections:
         from_node = str(connection.get("from_node", ""))
         to_node = str(connection.get("to_node", ""))
         
         # Only add valid connections between known nodes
         if from_node and to_node and to_node in dependencies:
-            if from_node not in dependencies[to_node]:
-                dependencies[to_node].append(from_node)
+            # Always add, even if duplicate (for multi-input nodes with same source)
+            dependencies[to_node].append(from_node)
     
     return dependencies
 
@@ -132,7 +186,8 @@ def calculate_pipeline_stages(
 def build_execution_pipeline(
     nodes: List[Dict[str, Any]],
     node_stages: Dict[str, int],
-    dependencies: Dict[str, List[str]]
+    dependencies: Dict[str, List[str]],
+    connections: List[Dict[str, str]] = None
 ) -> Dict[str, Any]:
     """
     Group nodes by stage and create execution plan.
@@ -183,12 +238,37 @@ def build_execution_pipeline(
     # Create node lookup
     node_lookup = {str(node.get("id", "")): node for node in nodes if node.get("id")}
     
+    # Build connection map: for each node, track (to_node_id, to_port) -> (from_node_id, from_port)
+    connection_map: Dict[Tuple[str, str], Tuple[str, str]] = {}
+    if connections:
+        for conn in connections:
+            from_node = str(conn.get("from_node", ""))
+            to_node = str(conn.get("to_node", ""))
+            from_port = str(conn.get("from_port", "output"))
+            to_port = str(conn.get("to_port", "input"))
+            key = (to_node, to_port)
+            connection_map[key] = (from_node, from_port)
+    
     # Assign nodes to stages
     for node_id, stage_num in node_stages.items():
         if node_id in node_lookup:
             node_data = node_lookup[node_id].copy()
             # Add dependency information
             node_data["inputs"] = dependencies.get(node_id, [])
+            
+            # Add input_connections for multi-output port support
+            # Maps to_port -> (from_node_id, from_port)
+            input_connections: Dict[str, Tuple[str, str]] = {}
+            if connections:
+                for conn in connections:
+                    to_node = str(conn.get("to_node", ""))
+                    if to_node == node_id:
+                        to_port = str(conn.get("to_port", "input"))
+                        from_node = str(conn.get("from_node", ""))
+                        from_port = str(conn.get("from_port", "output"))
+                        input_connections[to_port] = (from_node, from_port)
+            
+            node_data["input_connections"] = input_connections
             stage_buckets[stage_num].append(node_data)
     
     # Sort nodes within each stage by horizontal position
@@ -296,25 +376,11 @@ def validate_pipeline(
         if to_node and to_node not in all_node_ids:
             errors.append(f"Connection {idx}: to_node '{to_node}' does not exist")
     
-    # Warning: Check for disconnected nodes (optional - may be intentional)
-    connected_nodes = set()
-    for connection in connections:
-        from_node = str(connection.get("from_node", ""))
-        to_node = str(connection.get("to_node", ""))
-        if from_node:
-            connected_nodes.add(from_node)
-        if to_node:
-            connected_nodes.add(to_node)
+    # Note: Disconnected nodes (no incoming or outgoing connections) are allowed
+    # and will execute as independent inputs. This is intentional and not an error.
+    # They are silently included in the pipeline without warnings.
     
-    disconnected = all_node_ids - connected_nodes
-    if disconnected:
-        node_types = []
-        for node in nodes:
-            if str(node.get("id", "")) in disconnected:
-                node_types.append(f"{node.get('type', 'Unknown')} ({node.get('id', '')})")
-        errors.append(f"Warning: Disconnected nodes detected: {', '.join(node_types)}")
-    
-    # Pipeline is valid if no critical errors (warnings are OK)
+    # Pipeline is valid if no critical errors
     critical_errors = [e for e in errors if not e.startswith("Warning:")]
     is_valid = len(critical_errors) == 0
     
@@ -353,7 +419,7 @@ def build_pipeline_from_graph(
         node_stages = calculate_pipeline_stages(nodes, dependencies)
         
         # Step 3: Build execution pipeline
-        pipeline = build_execution_pipeline(nodes, node_stages, dependencies)
+        pipeline = build_execution_pipeline(nodes, node_stages, dependencies, connections)
         
         # Step 4: Validate pipeline
         is_valid, errors = validate_pipeline(pipeline, nodes, connections)
@@ -463,7 +529,7 @@ def build_update_pipeline(
         node_stages = calculate_pipeline_stages(affected_nodes, filtered_dependencies)
 
         # Build pipeline; keep full inputs so cached upstream data can be used
-        pipeline = build_execution_pipeline(affected_nodes, node_stages, full_dependencies)
+        pipeline = build_execution_pipeline(affected_nodes, node_stages, full_dependencies, affected_connections)
 
         # Validate only within affected subgraph
         is_valid, errors = validate_pipeline(pipeline, affected_nodes, affected_connections)
@@ -538,7 +604,8 @@ def execute_pipeline(
     pipeline: Dict[str, Any],
     node_executors: Dict[str, Any],
     use_threading: bool = True,
-    max_workers: Optional[int] = None
+    max_workers: Optional[int] = None,
+    initial_results: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Execute nodes in pipeline order with optional parallel execution.
@@ -570,7 +637,13 @@ def execute_pipeline(
     """
     import concurrent.futures
     
-    results: Dict[str, Any] = {}
+    results: Dict[str, Any] = dict(initial_results or {})
+    node_lookup: Dict[str, Dict[str, Any]] = {}
+    for stage in pipeline.get("stages", []):
+        for node in stage.get("nodes", []):
+            node_id = str(node.get("id", ""))
+            if node_id:
+                node_lookup[node_id] = node
     
     for stage in pipeline.get("stages", []):
         stage_results: Dict[str, Any] = {}
@@ -591,7 +664,22 @@ def execute_pipeline(
                         raise KeyError(f"No executor registered for node type: {node_type}")
                     
                     node_executor = node_executors[node_type]
-                    inputs = [results[dep_id] for dep_id in node.get("inputs", [])]
+                    
+                    # Build inputs using port information if available
+                    input_connections = node.get("input_connections", {})
+                    if input_connections:
+                        # Build inputs in order of to_port keys
+                        inputs = []
+                        for to_port in sorted(input_connections.keys()):
+                            from_node, from_port = input_connections[to_port]
+                            node_result = results[from_node]
+                            source_node = node_lookup.get(from_node)
+                            output_index = _resolve_output_index(from_port, source_node)
+                            output = _extract_output_by_port(node_result, from_port, output_index)
+                            inputs.append(output)
+                    else:
+                        # Fallback to old behavior for backward compatibility
+                        inputs = [results[dep_id] for dep_id in node.get("inputs", [])]
                     
                     # Submit task to thread pool
                     future = executor.submit(node_executor, node, inputs)
@@ -615,7 +703,23 @@ def execute_pipeline(
                     raise KeyError(f"No executor registered for node type: {node_type}")
                 
                 executor_fn = node_executors[node_type]
-                inputs = [results[dep_id] for dep_id in node.get("inputs", [])]
+                
+                # Build inputs using port information if available
+                input_connections = node.get("input_connections", {})
+                if input_connections:
+                    # Build inputs in order of to_port keys
+                    inputs = []
+                    # Sort by to_port to maintain order (assume naming like input, input_0, input_1)
+                    for to_port in sorted(input_connections.keys()):
+                        from_node, from_port = input_connections[to_port]
+                        node_result = results[from_node]
+                        source_node = node_lookup.get(from_node)
+                        output_index = _resolve_output_index(from_port, source_node)
+                        output = _extract_output_by_port(node_result, from_port, output_index)
+                        inputs.append(output)
+                else:
+                    # Fallback to old behavior for backward compatibility
+                    inputs = [results[dep_id] for dep_id in node.get("inputs", [])]
                 
                 try:
                     output = executor_fn(node, inputs)

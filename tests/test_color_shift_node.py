@@ -210,6 +210,25 @@ class TestColorShiftFilterEnhancements(unittest.TestCase):
         
         self.assertTrue(is_selected)
 
+    def test_match_distance_rgb_mode_preserves_relative_distance(self):
+        """Match-distance mode should map source-base deltas onto output base color."""
+        image = Image.new("RGBA", (1, 1), color=(130, 80, 85, 200))
+        options = ColorShiftFilterOptions(
+            selection_type="rgb_distance",
+            shift_type="match_distance_rgb",
+            tolerance=255,
+            output_base_color=(200, 10, 30, 220),
+        )
+
+        modified, _mask = self.filter.apply_color_shift_to_image(
+            image,
+            base_color=(100, 50, 75, 180),
+            options=options,
+            shift_value=0,
+        )
+
+        self.assertEqual(modified.getpixel((0, 0)), (230, 40, 40, 240))
+
 
 class TestColorShiftNodeConfig(unittest.TestCase):
     """Test ColorShiftNodeConfig dataclass."""
@@ -270,6 +289,17 @@ class TestColorShiftNodeConfig(unittest.TestCase):
         self.assertEqual(config.base_color_r, 180)
         self.assertEqual(config.base_color_g, 60)
         self.assertFalse(config.output_mask)
+
+    def test_config_from_dict_with_shift_triplet_list(self):
+        """Test list-based shift amount gets normalized for component shifts."""
+        data = {
+            "shift_type": "absolute_hsv",
+            "shift_amount": [25.0, -10.0, 40.0],
+        }
+
+        config = ColorShiftNodeConfig.from_dict(data)
+
+        self.assertEqual(config.shift_amount, (25.0, -10.0, 40.0))
     
     def test_config_get_base_color(self):
         """Test getting base color as RGBA tuple."""
@@ -358,6 +388,52 @@ class TestColorShiftNodeExecutor(unittest.TestCase):
         # Should return just the image, not a tuple
         self.assertNotIsInstance(result, tuple)
         self.assertEqual(result.size, (50, 50))
+
+    def test_execute_color_shift_with_shift_triplet_list(self):
+        """Test executing color shift with JSON-style component list shift amount."""
+        node = {
+            "id": "shift-triplet-list",
+            "base_color_r": 255,
+            "base_color_g": 0,
+            "base_color_b": 0,
+            "selection_type": "rgb_range",
+            "shift_type": "absolute_hsv",
+            "tolerance": 50,
+            "shift_amount": [0, -40, 40],
+            "output_mask": True,
+        }
+
+        result = execute_color_shift_node(node, [self.test_image])
+
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+
+    def test_execute_color_shift_match_distance_rgb(self):
+        """Test match-distance shift mode using explicit output base color."""
+        image = Image.new("RGBA", (1, 1), color=(110, 20, 35, 255))
+        node = {
+            "id": "shift-match-distance",
+            "base_color_r": 100,
+            "base_color_g": 10,
+            "base_color_b": 20,
+            "base_color_a": 255,
+            "output_color_r": 20,
+            "output_color_g": 200,
+            "output_color_b": 100,
+            "output_color_a": 255,
+            "selection_type": "rgb_distance",
+            "shift_type": "match_distance_rgb",
+            "tolerance": 255,
+            "shift_amount": 0,
+            "output_mask": True,
+        }
+
+        result = execute_color_shift_node(node, [image])
+
+        self.assertIsInstance(result, tuple)
+        modified, mask = result
+        self.assertEqual(modified.getpixel((0, 0)), (30, 210, 115, 255))
+        self.assertEqual(mask.getpixel((0, 0))[:3], (255, 255, 255))
     
     def test_execute_missing_input_raises_error(self):
         """Test that missing input raises ValueError."""
@@ -426,6 +502,7 @@ class TestColorShiftNodeRegistry(unittest.TestCase):
         
         self.assertEqual(meta["input_count"], 1)
         self.assertEqual(meta["output_count"], 2)
+        self.assertEqual(meta["output_ports"], ["image", "mask"])
         self.assertIn("processing", meta["tags"])
         self.assertIn("color", meta["tags"])
     

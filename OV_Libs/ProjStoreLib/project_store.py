@@ -86,8 +86,77 @@ def _create_connection_dict(from_node: str, to_node: str,
     }
 
 
+def _normalize_node(node: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize node data while preserving optional graph UI metadata."""
+    node_id = str(node.get("id") or uuid.uuid4())
+    node_type = str(node.get("type") or NODE_TYPE_DEFAULT)
+    x = float(node.get("x", 100.0))
+    y = float(node.get("y", 100.0))
+
+    normalized: Dict[str, Any] = {"id": node_id, "type": node_type, "x": x, "y": y}
+
+    width_value = node.get("width")
+    if width_value is not None:
+        try:
+            normalized["width"] = max(1.0, float(width_value))
+        except (TypeError, ValueError):
+            pass
+
+    height_value = node.get("height")
+    if height_value is not None:
+        try:
+            normalized["height"] = max(1.0, float(height_value))
+        except (TypeError, ValueError):
+            pass
+
+    input_count_value = node.get("input_count")
+    if input_count_value is not None:
+        try:
+            normalized["input_count"] = max(0, int(input_count_value))
+        except (TypeError, ValueError):
+            pass
+
+    output_count_value = node.get("output_count")
+    if output_count_value is not None:
+        try:
+            normalized["output_count"] = max(0, int(output_count_value))
+        except (TypeError, ValueError):
+            pass
+
+    input_ports_value = node.get("input_ports")
+    if isinstance(input_ports_value, list):
+        normalized_input_ports = [str(value) for value in input_ports_value if str(value).strip()]
+        if normalized_input_ports:
+            normalized["input_ports"] = normalized_input_ports
+
+    output_ports_value = node.get("output_ports")
+    if isinstance(output_ports_value, list):
+        normalized_output_ports = [str(value) for value in output_ports_value if str(value).strip()]
+        if normalized_output_ports:
+            normalized["output_ports"] = normalized_output_ports
+
+    core_keys = {
+        "id",
+        "type",
+        "x",
+        "y",
+        "width",
+        "height",
+        "input_count",
+        "output_count",
+        "input_ports",
+        "output_ports",
+    }
+    for key, value in node.items():
+        if key in core_keys:
+            continue
+        normalized[key] = value
+
+    return normalized
+
+
 def _default_test_graph() -> Dict[str, Any]:
-    """Create a default test graph with three connected nodes."""
+    """Create a default graph with three connected nodes."""
     input_id = str(uuid.uuid4())
     process_id = str(uuid.uuid4())
     output_id = str(uuid.uuid4())
@@ -102,6 +171,13 @@ def _default_test_graph() -> Dict[str, Any]:
             _create_connection_dict(input_id, process_id),
             _create_connection_dict(process_id, output_id),
         ],
+    }
+
+
+def _empty_graph() -> Dict[str, Any]:
+    return {
+        FIELD_NODES: [],
+        FIELD_CONNECTIONS: [],
     }
 
 
@@ -179,7 +255,7 @@ def create_project_file(base_dir: Path, project_name: str) -> Path:
         FIELD_CREATED_AT: datetime.now().isoformat(timespec="seconds"),
         FIELD_IMAGE_PATHS: [],
         FIELD_FILTER_STACKS: {},
-        FIELD_NODE_GRAPH: _default_test_graph(),
+        FIELD_NODE_GRAPH: _empty_graph(),
         FIELD_OUTPUT_PRESETS: {},
     }
 
@@ -216,30 +292,18 @@ def load_project_data(project_path: Path) -> Dict[str, Any]:
 
     node_graph = payload.get("node_graph")
     if not isinstance(node_graph, dict):
-        node_graph = _default_test_graph()
+        node_graph = _empty_graph()
 
     nodes = node_graph.get("nodes")
-    if not isinstance(nodes, list) or not nodes:
-        default_graph = _default_test_graph()
-        node_graph["nodes"] = default_graph["nodes"]
-        node_graph["connections"] = default_graph["connections"]
+    if not isinstance(nodes, list):
+        node_graph["nodes"] = []
     else:
         normalized_nodes: List[Dict[str, Any]] = []
         for node in nodes:
             if not isinstance(node, dict):
                 continue
-            node_id = str(node.get("id") or uuid.uuid4())
-            node_type = str(node.get("type") or "Test Node")
-            x = float(node.get("x", 100.0))
-            y = float(node.get("y", 100.0))
-            normalized_nodes.append({"id": node_id, "type": node_type, "x": x, "y": y})
-
-        if normalized_nodes:
-            node_graph["nodes"] = normalized_nodes
-        else:
-            default_graph = _default_test_graph()
-            node_graph["nodes"] = default_graph["nodes"]
-            node_graph["connections"] = default_graph["connections"]
+            normalized_nodes.append(_normalize_node(node))
+        node_graph["nodes"] = normalized_nodes
     connections = node_graph.get("connections")
     if not isinstance(connections, list):
         node_graph["connections"] = []
@@ -261,7 +325,7 @@ def load_project_data(project_path: Path) -> Dict[str, Any]:
                 continue
             if from_node not in known_ids or to_node not in known_ids:
                 continue
-            if from_port != "output" or to_port != "input":
+            if not from_port or not to_port:
                 continue
 
             input_key = (to_node, to_port)
@@ -331,11 +395,7 @@ def save_project_graph(project_path: Path, nodes: List[Dict[str, Any]], connecti
     for node in nodes:
         if not isinstance(node, dict):
             continue
-        node_id = str(node.get("id") or uuid.uuid4())
-        node_type = str(node.get("type") or "Test Node")
-        x = float(node.get("x", 100.0))
-        y = float(node.get("y", 100.0))
-        normalized_nodes.append({"id": node_id, "type": node_type, "x": x, "y": y})
+        normalized_nodes.append(_normalize_node(node))
 
     known_ids = {str(node.get("id")) for node in normalized_nodes}
     normalized_connections: List[Dict[str, str]] = []
@@ -354,7 +414,7 @@ def save_project_graph(project_path: Path, nodes: List[Dict[str, Any]], connecti
             continue
         if from_node not in known_ids or to_node not in known_ids:
             continue
-        if from_port != "output" or to_port != "input":
+        if not from_port or not to_port:
             continue
 
         input_key = (to_node, to_port)

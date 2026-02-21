@@ -74,10 +74,10 @@ PORT_INPUT = "input"
 PORT_OUTPUT = "output"
 
 # Default node types
-NODE_TYPE_INPUT = "Test Input"
-NODE_TYPE_PROCESS = "Test Process"
-NODE_TYPE_OUTPUT = "Test Output"
-NODE_TYPE_DEFAULT = "Test Node"
+NODE_TYPE_INPUT = "Image Import"
+NODE_TYPE_PROCESS = "Color Shift"
+NODE_TYPE_OUTPUT = "Output"
+NODE_TYPE_DEFAULT = "Node"
 
 # Image import node type
 NODE_TYPE_IMAGE_IMPORT = "Image Import"

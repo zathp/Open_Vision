@@ -323,6 +323,8 @@ def execute_output_node(node: Dict[str, Any], inputs: List[Any]) -> Path:
         raise ValueError("Output node requires 1 input image")
     
     image = inputs[0]
+    if isinstance(image, (list, tuple)) and image:
+        image = image[0]
     
     if not hasattr(image, "save") or not hasattr(image, "mode"):
         raise TypeError(f"Expected PIL Image, got {type(image)}")

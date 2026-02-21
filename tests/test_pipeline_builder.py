@@ -93,6 +93,28 @@ class TestBuildDependencyMap(unittest.TestCase):
         # Invalid connection should be ignored
         self.assertEqual(deps["n1"], [])
         self.assertEqual(deps["n2"], [])
+    
+    def test_multi_input_same_source(self):
+        """Test multiple connections from same source to different input ports (e.g., Mask Blur).
+        
+        When a node receives multiple connections from the same source node to different
+        input ports, the dependency list should contain duplicates to preserve the port mapping.
+        """
+        nodes = [
+            {"id": "source"},
+            {"id": "dual_input"}
+        ]
+        connections = [
+            {"from_node": "source", "to_node": "dual_input", "from_port": "output", "to_port": "input_0"},
+            {"from_node": "source", "to_node": "dual_input", "from_port": "output", "to_port": "input_1"}
+        ]
+        
+        deps = build_dependency_map(nodes, connections)
+        
+        # Should have source node twice (once per port connection)
+        self.assertEqual(deps["source"], [])
+        self.assertEqual(deps["dual_input"], ["source", "source"])
+        self.assertEqual(len(deps["dual_input"]), 2)
 
 
 class TestCalculatePipelineStages(unittest.TestCase):
@@ -611,6 +633,42 @@ class TestExecutePipeline(unittest.TestCase):
         parallel_results = execute_pipeline(pipeline, executors, use_threading=True)
 
         self.assertEqual(sequential_results, parallel_results)
+
+    def test_named_output_ports_map_to_tuple_indexes(self):
+        """Named output ports should resolve to tuple positions via source node output_ports."""
+        pipeline = {
+            "stages": [
+                {
+                    "stage_number": 0,
+                    "can_parallelize": False,
+                    "nodes": [
+                        {"id": "cs", "type": "Color Shift", "inputs": [], "output_ports": ["image", "mask"]}
+                    ],
+                },
+                {
+                    "stage_number": 1,
+                    "can_parallelize": False,
+                    "nodes": [
+                        {
+                            "id": "sink",
+                            "type": "Sink",
+                            "inputs": ["cs"],
+                            "input_connections": {"input": ("cs", "mask")},
+                        }
+                    ],
+                },
+            ],
+            "max_stage": 1,
+            "execution_order": ["cs", "sink"],
+        }
+
+        executors = {
+            "Color Shift": lambda node, inputs: ("IMAGE_VALUE", "MASK_VALUE"),
+            "Sink": lambda node, inputs: inputs[0],
+        }
+
+        results = execute_pipeline(pipeline, executors, use_threading=False)
+        self.assertEqual(results["sink"], "MASK_VALUE")
 
 
 class TestBuildUpdatePipeline(unittest.TestCase):
