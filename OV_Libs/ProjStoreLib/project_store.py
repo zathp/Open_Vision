@@ -310,45 +310,45 @@ def load_project_data(project_path: Path) -> Dict[str, Any]:
 
 
 def save_project_data(project_path: Path, payload: Dict[str, Any]) -> None:
-    payload["schema_version"] = SCHEMA_VERSION
+    payload[FIELD_SCHEMA_VERSION] = SCHEMA_VERSION
     project_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def load_project_nodes(project_path: Path) -> List[Dict[str, Any]]:
     payload = load_project_data(project_path)
-    node_graph = payload.get("node_graph", {})
-    return list(node_graph.get("nodes", []))
+    node_graph = payload.get(FIELD_NODE_GRAPH, {})
+    return list(node_graph.get(FIELD_NODES, []))
 
 
 def save_project_nodes(project_path: Path, nodes: List[Dict[str, Any]]) -> None:
     payload = load_project_data(project_path)
-    node_graph = payload.get("node_graph")
+    node_graph = payload.get(FIELD_NODE_GRAPH)
     if not isinstance(node_graph, dict):
         node_graph = {}
 
-    node_graph["nodes"] = nodes
-    node_graph.setdefault("connections", [])
-    payload["node_graph"] = node_graph
+    node_graph[FIELD_NODES] = nodes
+    node_graph.setdefault(FIELD_CONNECTIONS, [])
+    payload[FIELD_NODE_GRAPH] = node_graph
     save_project_data(project_path, payload)
 
 
 def load_project_graph(project_path: Path) -> Dict[str, Any]:
     payload = load_project_data(project_path)
-    node_graph = payload.get("node_graph", {})
+    node_graph = payload.get(FIELD_NODE_GRAPH, {})
     connections = []
-    for connection in list(node_graph.get("connections", [])):
+    for connection in list(node_graph.get(FIELD_CONNECTIONS, [])):
         if isinstance(connection, dict):
             connections.append(_normalize_connection(connection))
 
     return {
-        "nodes": list(node_graph.get("nodes", [])),
-        "connections": connections,
+        FIELD_NODES: list(node_graph.get(FIELD_NODES, [])),
+        FIELD_CONNECTIONS: connections,
     }
 
 
 def save_project_graph(project_path: Path, nodes: List[Dict[str, Any]], connections: List[Dict[str, str]]) -> None:
     payload = load_project_data(project_path)
-    node_graph = payload.get("node_graph")
+    node_graph = payload.get(FIELD_NODE_GRAPH)
     if not isinstance(node_graph, dict):
         node_graph = {}
 
@@ -356,13 +356,13 @@ def save_project_graph(project_path: Path, nodes: List[Dict[str, Any]], connecti
     for node in nodes:
         if not isinstance(node, dict):
             continue
-        node_id = str(node.get("id") or uuid.uuid4())
-        node_type = str(node.get("type") or "Test Node")
-        x = float(node.get("x", 100.0))
-        y = float(node.get("y", 100.0))
-        normalized_nodes.append({"id": node_id, "type": node_type, "x": x, "y": y})
+        node_id = str(node.get(FIELD_NODE_ID) or uuid.uuid4())
+        node_type = str(node.get(FIELD_NODE_TYPE) or NODE_TYPE_DEFAULT)
+        x = float(node.get(FIELD_NODE_X, 100.0))
+        y = float(node.get(FIELD_NODE_Y, 100.0))
+        normalized_nodes.append({FIELD_NODE_ID: node_id, FIELD_NODE_TYPE: node_type, FIELD_NODE_X: x, FIELD_NODE_Y: y})
 
-    known_ids = {str(node.get("id")) for node in normalized_nodes}
+    known_ids = {str(node.get(FIELD_NODE_ID)) for node in normalized_nodes}
     normalized_connections: List[Dict[str, str]] = []
     occupied_inputs = set()
     for connection in connections:
@@ -370,16 +370,16 @@ def save_project_graph(project_path: Path, nodes: List[Dict[str, Any]], connecti
             continue
 
         normalized = _normalize_connection(connection)
-        from_node = normalized["from_node"]
-        from_port = normalized["from_port"]
-        to_node = normalized["to_node"]
-        to_port = normalized["to_port"]
+        from_node = normalized[FIELD_FROM_NODE]
+        from_port = normalized[FIELD_FROM_PORT]
+        to_node = normalized[FIELD_TO_NODE]
+        to_port = normalized[FIELD_TO_PORT]
 
         if not from_node or not to_node or from_node == to_node:
             continue
         if from_node not in known_ids or to_node not in known_ids:
             continue
-        if from_port != "output" or to_port != "input":
+        if from_port != PORT_OUTPUT or to_port != PORT_INPUT:
             continue
 
         input_key = (to_node, to_port)
@@ -389,7 +389,7 @@ def save_project_graph(project_path: Path, nodes: List[Dict[str, Any]], connecti
         occupied_inputs.add(input_key)
         normalized_connections.append(normalized)
 
-    node_graph["nodes"] = normalized_nodes
-    node_graph["connections"] = normalized_connections
-    payload["node_graph"] = node_graph
+    node_graph[FIELD_NODES] = normalized_nodes
+    node_graph[FIELD_CONNECTIONS] = normalized_connections
+    payload[FIELD_NODE_GRAPH] = node_graph
     save_project_data(project_path, payload)
