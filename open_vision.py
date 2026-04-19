@@ -19,6 +19,8 @@ from PyQt5.QtWidgets import (
 )
 
 from node_editor_window import NodeEditorWindow
+from paint_editor_window import PaintEditorWindow
+from OV_Libs.constants import PROJECT_EXTENSION, PAINT_PROJECT_EXTENSION
 from OV_Libs.ProjStoreLib.project_store import create_project_file, list_project_files, load_project_name
 
 
@@ -30,7 +32,7 @@ class OpenVisionMainWindow(QMainWindow):
 
         self.base_dir = Path(__file__).resolve().parent
         self.project_files: List[Path] = []
-        self.editor_window: Optional[NodeEditorWindow] = None
+        self.editor_windows: List[QMainWindow] = [] # Track multiple editor windows
 
         self._build_ui()
         self._connect_signals()
@@ -105,21 +107,29 @@ class OpenVisionMainWindow(QMainWindow):
         self.label_selected_project.setText(f"Selected project: {project_name}")
 
     def create_project(self) -> None:
-        name, ok = QInputDialog.getText(self, "Create Project", "Project name:")
+        items = ["Node Graph Project (.ovproj)", "Paint Project (.ovpaint)"]
+        item, ok = QInputDialog.getItem(self, "New Project", "Select project type:", items, 0, False)
+        if not ok or not item:
+            return
+
+        name, ok = QInputDialog.getText(self, "Project Name", "Enter project name:")
         if not ok or not name.strip():
             return
 
-        project_path = create_project_file(self.base_dir, name.strip())
+        extension = PROJECT_EXTENSION if "Node Graph" in item else PAINT_PROJECT_EXTENSION
+        project_path = create_project_file(self.base_dir, name.strip(), extension=extension)
+        
         self.refresh_projects()
         self._select_project(project_path)
-        QMessageBox.information(self, "Project Created", f"Created project file:\n{project_path}")
+        QMessageBox.information(self, "Project Created", f"Created {item}:\n{project_path.name}")
 
     def open_project_file(self) -> None:
+        filters = f"All Projects (*{PROJECT_EXTENSION} *{PAINT_PROJECT_EXTENSION});;Node Graph (*{PROJECT_EXTENSION});;Paint Project (*{PAINT_PROJECT_EXTENSION})"
         selected_file, _ = QFileDialog.getOpenFileName(
             self,
             "Open Project File",
             str(self.base_dir),
-            "Open Vision Project (*.ovproj)",
+            filters,
         )
         if not selected_file:
             return
@@ -142,8 +152,16 @@ class OpenVisionMainWindow(QMainWindow):
         self.launch_project(self.project_files[index])
 
     def launch_project(self, project_path: Path) -> None:
-        self.editor_window = NodeEditorWindow(project_path=project_path)
-        self.editor_window.show()
+        if project_path.suffix.lower() == PROJECT_EXTENSION:
+            editor = NodeEditorWindow(project_path=project_path)
+        elif project_path.suffix.lower() == PAINT_PROJECT_EXTENSION:
+            editor = PaintEditorWindow(project_path=project_path)
+        else:
+            QMessageBox.critical(self, "Error", f"Unknown project type: {project_path.suffix}")
+            return
+
+        editor.show()
+        self.editor_windows.append(editor)
 
     def _select_project(self, project_path: Path) -> None:
         for index, known_path in enumerate(self.project_files):
