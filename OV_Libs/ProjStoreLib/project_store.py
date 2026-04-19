@@ -62,6 +62,7 @@ from OV_Libs.constants import (
     FIELD_FROM_PORT,
     FIELD_TO_NODE,
     FIELD_TO_PORT,
+    PAINT_PROJECT_EXTENSION,
 )
 
 
@@ -139,22 +140,43 @@ def get_projects_dir(base_dir: Path) -> Path:
 
 def list_project_files(base_dir: Path) -> List[Path]:
     projects_dir = get_projects_dir(base_dir)
-    return sorted(projects_dir.glob(f"*{PROJECT_EXTENSION}"))
+    # Search for both .ovproj and .ovpaint files
+    return sorted(list(projects_dir.glob(f"*{PROJECT_EXTENSION}")) + 
+                  list(projects_dir.glob(f"*{PAINT_PROJECT_EXTENSION}")))
 
 
-def create_project_file(base_dir: Path, project_name: str) -> Path:
+def _default_paint_data() -> Dict[str, Any]:
+    """Create a default paint project structure."""
+    return {
+        "canvas_size": [1280, 720],
+        "layers": [
+            {
+                "name": "Background",
+                "visible": True,
+                "opacity": 1.0,
+                "data_path": None # null means blank/transparent for now
+            }
+        ],
+        "tool_settings": {
+            "last_tool": "brush",
+            "foreground_color": [0, 0, 0, 255],
+            "background_color": [255, 255, 255, 255],
+            "brush_size": 5
+        }
+    }
+
+
+def create_project_file(base_dir: Path, project_name: str, extension: str = PROJECT_EXTENSION) -> Path:
     """
     Create a new project file with default structure.
     
     Args:
         base_dir: Base directory containing the Projects folder
         project_name: Human-readable name for the project
+        extension: The file extension (.ovproj or .ovpaint)
         
     Returns:
         Path to the created project file
-        
-    Raises:
-        ValueError: If project_name is empty after sanitization
     """
     projects_dir = get_projects_dir(base_dir)
     
@@ -167,10 +189,10 @@ def create_project_file(base_dir: Path, project_name: str) -> Path:
     if not safe_name:
         safe_name = "new_project"
 
-    project_path = projects_dir / f"{safe_name}{PROJECT_EXTENSION}"
+    project_path = projects_dir / f"{safe_name}{extension}"
     counter = 1
     while project_path.exists():
-        project_path = projects_dir / f"{safe_name}_{counter}{PROJECT_EXTENSION}"
+        project_path = projects_dir / f"{safe_name}_{counter}{extension}"
         counter += 1
 
     payload: Dict[str, object] = {
@@ -179,9 +201,13 @@ def create_project_file(base_dir: Path, project_name: str) -> Path:
         FIELD_CREATED_AT: datetime.now().isoformat(timespec="seconds"),
         FIELD_IMAGE_PATHS: [],
         FIELD_FILTER_STACKS: {},
-        FIELD_NODE_GRAPH: _default_test_graph(),
         FIELD_OUTPUT_PRESETS: {},
     }
+
+    if extension == PROJECT_EXTENSION:
+        payload[FIELD_NODE_GRAPH] = _default_test_graph()
+    elif extension == PAINT_PROJECT_EXTENSION:
+        payload.update(_default_paint_data())
 
     project_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return project_path
@@ -214,116 +240,115 @@ def load_project_data(project_path: Path) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         payload = {}
 
-    node_graph = payload.get("node_graph")
-    if not isinstance(node_graph, dict):
-        node_graph = _default_test_graph()
+    # Metadata defaults
+    payload.setdefault(FIELD_SCHEMA_VERSION, SCHEMA_VERSION)
+    payload.setdefault(FIELD_NAME, project_path.stem)
+    payload.setdefault(FIELD_CREATED_AT, datetime.now().isoformat(timespec="seconds"))
+    payload.setdefault(FIELD_IMAGE_PATHS, [])
+    payload.setdefault(FIELD_FILTER_STACKS, {})
+    payload.setdefault(FIELD_OUTPUT_PRESETS, {})
 
-    nodes = node_graph.get("nodes")
-    if not isinstance(nodes, list) or not nodes:
-        default_graph = _default_test_graph()
-        node_graph["nodes"] = default_graph["nodes"]
-        node_graph["connections"] = default_graph["connections"]
-    else:
-        normalized_nodes: List[Dict[str, Any]] = []
-        for node in nodes:
-            if not isinstance(node, dict):
-                continue
-            node_id = str(node.get("id") or uuid.uuid4())
-            node_type = str(node.get("type") or "Test Node")
-            x = float(node.get("x", 100.0))
-            y = float(node.get("y", 100.0))
-            normalized_nodes.append({"id": node_id, "type": node_type, "x": x, "y": y})
+    # Extension-specific normalization
+    extension = project_path.suffix.lower()
 
-        if normalized_nodes:
-            node_graph["nodes"] = normalized_nodes
-        else:
+    if extension == PROJECT_EXTENSION:
+        node_graph = payload.get(FIELD_NODE_GRAPH)
+        if not isinstance(node_graph, dict):
+            node_graph = _default_test_graph()
+
+        nodes = node_graph.get(FIELD_NODES)
+        if not isinstance(nodes, list) or not nodes:
             default_graph = _default_test_graph()
-            node_graph["nodes"] = default_graph["nodes"]
-            node_graph["connections"] = default_graph["connections"]
-    connections = node_graph.get("connections")
-    if not isinstance(connections, list):
-        node_graph["connections"] = []
-    else:
-        known_ids = {str(node.get("id")) for node in node_graph.get("nodes", []) if isinstance(node, dict)}
-        normalized_connections: List[Dict[str, str]] = []
-        occupied_inputs = set()
-        for connection in connections:
-            if not isinstance(connection, dict):
-                continue
+            node_graph[FIELD_NODES] = default_graph[FIELD_NODES]
+            node_graph[FIELD_CONNECTIONS] = default_graph[FIELD_CONNECTIONS]
+        else:
+            normalized_nodes: List[Dict[str, Any]] = []
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                node_id = str(node.get(FIELD_NODE_ID) or uuid.uuid4())
+                node_type = str(node.get(FIELD_NODE_TYPE) or NODE_TYPE_DEFAULT)
+                x = float(node.get(FIELD_NODE_X, 100.0))
+                y = float(node.get(FIELD_NODE_Y, 100.0))
+                normalized_nodes.append({FIELD_NODE_ID: node_id, FIELD_NODE_TYPE: node_type, FIELD_NODE_X: x, FIELD_NODE_Y: y})
+            
+            node_graph[FIELD_NODES] = normalized_nodes
 
-            normalized = _normalize_connection(connection)
-            from_node = normalized["from_node"]
-            from_port = normalized["from_port"]
-            to_node = normalized["to_node"]
-            to_port = normalized["to_port"]
+        connections = node_graph.get(FIELD_CONNECTIONS)
+        if not isinstance(connections, list):
+            node_graph[FIELD_CONNECTIONS] = []
+        else:
+            known_ids = {str(node.get(FIELD_NODE_ID)) for node in node_graph.get(FIELD_NODES, [])}
+            normalized_connections: List[Dict[str, str]] = []
+            occupied_inputs = set()
+            for connection in connections:
+                if not isinstance(connection, dict):
+                    continue
+                normalized = _normalize_connection(connection)
+                if not normalized[FIELD_FROM_NODE] or not normalized[FIELD_TO_NODE]:
+                    continue
+                if normalized[FIELD_FROM_NODE] not in known_ids or normalized[FIELD_TO_NODE] not in known_ids:
+                    continue
+                
+                input_key = (normalized[FIELD_TO_NODE], normalized[FIELD_TO_PORT])
+                if input_key in occupied_inputs:
+                    continue
+                
+                occupied_inputs.add(input_key)
+                normalized_connections.append(normalized)
+            node_graph[FIELD_CONNECTIONS] = normalized_connections
+        
+        payload[FIELD_NODE_GRAPH] = node_graph
 
-            if not from_node or not to_node or from_node == to_node:
-                continue
-            if from_node not in known_ids or to_node not in known_ids:
-                continue
-            if from_port != "output" or to_port != "input":
-                continue
-
-            input_key = (to_node, to_port)
-            if input_key in occupied_inputs:
-                continue
-
-            occupied_inputs.add(input_key)
-            normalized_connections.append(normalized)
-
-        node_graph["connections"] = normalized_connections
-
-    payload.setdefault("schema_version", SCHEMA_VERSION)
-    payload.setdefault("name", project_path.stem)
-    payload.setdefault("created_at", datetime.now().isoformat(timespec="seconds"))
-    payload.setdefault("image_paths", [])
-    payload.setdefault("filter_stacks", {})
-    payload.setdefault("output_presets", {})
-    payload["node_graph"] = node_graph
+    elif extension == PAINT_PROJECT_EXTENSION:
+        default_paint = _default_paint_data()
+        payload.setdefault("canvas_size", default_paint["canvas_size"])
+        payload.setdefault("layers", default_paint["layers"])
+        payload.setdefault("tool_settings", default_paint["tool_settings"])
 
     return payload
 
 
 def save_project_data(project_path: Path, payload: Dict[str, Any]) -> None:
-    payload["schema_version"] = SCHEMA_VERSION
+    payload[FIELD_SCHEMA_VERSION] = SCHEMA_VERSION
     project_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def load_project_nodes(project_path: Path) -> List[Dict[str, Any]]:
     payload = load_project_data(project_path)
-    node_graph = payload.get("node_graph", {})
-    return list(node_graph.get("nodes", []))
+    node_graph = payload.get(FIELD_NODE_GRAPH, {})
+    return list(node_graph.get(FIELD_NODES, []))
 
 
 def save_project_nodes(project_path: Path, nodes: List[Dict[str, Any]]) -> None:
     payload = load_project_data(project_path)
-    node_graph = payload.get("node_graph")
+    node_graph = payload.get(FIELD_NODE_GRAPH)
     if not isinstance(node_graph, dict):
         node_graph = {}
 
-    node_graph["nodes"] = nodes
-    node_graph.setdefault("connections", [])
-    payload["node_graph"] = node_graph
+    node_graph[FIELD_NODES] = nodes
+    node_graph.setdefault(FIELD_CONNECTIONS, [])
+    payload[FIELD_NODE_GRAPH] = node_graph
     save_project_data(project_path, payload)
 
 
 def load_project_graph(project_path: Path) -> Dict[str, Any]:
     payload = load_project_data(project_path)
-    node_graph = payload.get("node_graph", {})
+    node_graph = payload.get(FIELD_NODE_GRAPH, {})
     connections = []
-    for connection in list(node_graph.get("connections", [])):
+    for connection in list(node_graph.get(FIELD_CONNECTIONS, [])):
         if isinstance(connection, dict):
             connections.append(_normalize_connection(connection))
 
     return {
-        "nodes": list(node_graph.get("nodes", [])),
-        "connections": connections,
+        FIELD_NODES: list(node_graph.get(FIELD_NODES, [])),
+        FIELD_CONNECTIONS: connections,
     }
 
 
 def save_project_graph(project_path: Path, nodes: List[Dict[str, Any]], connections: List[Dict[str, str]]) -> None:
     payload = load_project_data(project_path)
-    node_graph = payload.get("node_graph")
+    node_graph = payload.get(FIELD_NODE_GRAPH)
     if not isinstance(node_graph, dict):
         node_graph = {}
 
@@ -331,13 +356,13 @@ def save_project_graph(project_path: Path, nodes: List[Dict[str, Any]], connecti
     for node in nodes:
         if not isinstance(node, dict):
             continue
-        node_id = str(node.get("id") or uuid.uuid4())
-        node_type = str(node.get("type") or "Test Node")
-        x = float(node.get("x", 100.0))
-        y = float(node.get("y", 100.0))
-        normalized_nodes.append({"id": node_id, "type": node_type, "x": x, "y": y})
+        node_id = str(node.get(FIELD_NODE_ID) or uuid.uuid4())
+        node_type = str(node.get(FIELD_NODE_TYPE) or NODE_TYPE_DEFAULT)
+        x = float(node.get(FIELD_NODE_X, 100.0))
+        y = float(node.get(FIELD_NODE_Y, 100.0))
+        normalized_nodes.append({FIELD_NODE_ID: node_id, FIELD_NODE_TYPE: node_type, FIELD_NODE_X: x, FIELD_NODE_Y: y})
 
-    known_ids = {str(node.get("id")) for node in normalized_nodes}
+    known_ids = {str(node.get(FIELD_NODE_ID)) for node in normalized_nodes}
     normalized_connections: List[Dict[str, str]] = []
     occupied_inputs = set()
     for connection in connections:
@@ -345,16 +370,16 @@ def save_project_graph(project_path: Path, nodes: List[Dict[str, Any]], connecti
             continue
 
         normalized = _normalize_connection(connection)
-        from_node = normalized["from_node"]
-        from_port = normalized["from_port"]
-        to_node = normalized["to_node"]
-        to_port = normalized["to_port"]
+        from_node = normalized[FIELD_FROM_NODE]
+        from_port = normalized[FIELD_FROM_PORT]
+        to_node = normalized[FIELD_TO_NODE]
+        to_port = normalized[FIELD_TO_PORT]
 
         if not from_node or not to_node or from_node == to_node:
             continue
         if from_node not in known_ids or to_node not in known_ids:
             continue
-        if from_port != "output" or to_port != "input":
+        if from_port != PORT_OUTPUT or to_port != PORT_INPUT:
             continue
 
         input_key = (to_node, to_port)
@@ -364,7 +389,7 @@ def save_project_graph(project_path: Path, nodes: List[Dict[str, Any]], connecti
         occupied_inputs.add(input_key)
         normalized_connections.append(normalized)
 
-    node_graph["nodes"] = normalized_nodes
-    node_graph["connections"] = normalized_connections
-    payload["node_graph"] = node_graph
+    node_graph[FIELD_NODES] = normalized_nodes
+    node_graph[FIELD_CONNECTIONS] = normalized_connections
+    payload[FIELD_NODE_GRAPH] = node_graph
     save_project_data(project_path, payload)

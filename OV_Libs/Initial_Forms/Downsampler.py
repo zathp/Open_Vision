@@ -5,20 +5,23 @@ import os
 import sys
 
 
-def downsample_image_hsv(input_path, output_size=(32, 32)):
+def downsample_image_hsv(input_source, output_size=(32, 32)):
     """
     Downsample an image to the specified size using HSV averaging
     from only fully opaque pixels (alpha = 255).
     
     Args:
-        input_path: Path to the input image
+        input_source: Path to the input image OR a PIL Image object
         output_size: Tuple of (width, height) for output image
     
     Returns:
         PIL Image object of the downsampled image
     """
     # Load the image
-    img = Image.open(input_path).convert('RGBA')
+    if isinstance(input_source, Image.Image):
+        img = input_source.convert('RGBA')
+    else:
+        img = Image.open(input_source).convert('RGBA')
     original_size = img.size
     
     # Calculate block sizes

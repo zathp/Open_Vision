@@ -3,12 +3,12 @@ import os
 import sys
 
 
-def mirror_image(input_path, axis='horizontal', output_path=None):
+def mirror_image(input_source, axis='horizontal', output_path=None):
     """
     Mirror an image along a specified axis.
     
     Args:
-        input_path: Path to the input image
+        input_source: Path to the input image OR a PIL Image object
         axis: One of 'horizontal', 'vertical', 'diagonal_tl_br', 'diagonal_tr_bl'
               - 'horizontal': flip top-bottom
               - 'vertical': flip left-right
@@ -20,7 +20,10 @@ def mirror_image(input_path, axis='horizontal', output_path=None):
         PIL Image object of the mirrored image
     """
     # Load the image
-    img = Image.open(input_path)
+    if isinstance(input_source, Image.Image):
+        img = input_source
+    else:
+        img = Image.open(input_source)
     
     if axis == 'horizontal':
         # Flip top to bottom

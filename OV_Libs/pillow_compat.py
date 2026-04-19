@@ -36,3 +36,29 @@ try:
     ImageClass = getattr(_pil_image, "Image")
 except Exception:
     ImageClass = None
+
+
+def qimage_to_pil(qimage) -> "Image.Image":
+    """Convert a QImage to a PIL Image."""
+    from PyQt5.QtCore import QBuffer, QIODevice
+    import io
+
+    buffer = QBuffer()
+    buffer.open(QIODevice.WriteOnly)
+    qimage.save(buffer, "PNG")
+    
+    # buffer.data() returns a QByteArray; .data() on that returns Python bytes
+    return Image.open(io.BytesIO(buffer.data().data())).convert("RGBA")
+
+
+def pil_to_qimage(pil_image: "Image.Image"):
+    """Convert a PIL Image to a QImage."""
+    from PyQt5.QtGui import QImage
+    import io
+
+    buffer = io.BytesIO()
+    pil_image.save(buffer, format="PNG")
+    buffer.seek(0)
+    qimage = QImage()
+    qimage.loadFromData(buffer.getvalue(), "PNG")
+    return qimage.convertToFormat(QImage.Format_ARGB32)

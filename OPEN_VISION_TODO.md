@@ -9,9 +9,11 @@ This TODO tracks implementation after the refactor where `open_vision.py` is a p
 - [x] Move image-editing logic out of `open_vision.py` into dedicated files.
 - [x] Keep `open_vision.py` focused on project selection/creation and editor launch.
 - [x] Add basic `.ovproj` project file creation and listing.
-- [ ] Add project type selector to creation dialog (Node Graph vs Paint)
-- [ ] Create basic `.ovpaint` project file format and storage
-- [ ] Implement `PaintEditorWindow` skeleton class
+- [x] Add project type selector to creation dialog (Node Graph vs Paint)
+- [x] Create basic `.ovpaint` project file format and storage
+- [x] Implement `PaintEditorWindow` skeleton and core logic
+- [x] Implement `.ovproj` schema versioning and persistence
+- [x] Implement functional `NodeEditorWindow` with image previews
 
 ## Priority 1 - Project Persistence MVP
 
