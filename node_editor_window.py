@@ -53,6 +53,7 @@ from OV_Libs.ProjStoreLib.pipeline_builder import (
     get_pipeline_summary,
 )
 from OV_Libs.ProjStoreLib.project_store import load_project_graph, save_project_graph
+from layer_editor import LayerListWidget
 
 
 class NodeParameterEditorDialog(QDialog):
@@ -245,6 +246,10 @@ class NodeParameterEditorDialog(QDialog):
         return key.replace("_", " ").title()
 
     def _create_editor_widget(self, key: str, value: object) -> Tuple[QWidget, Callable[[], object]]:
+        # Specialized layer editor for Image Layer node
+        if self.node_type == "Image Layer" and key == "layers":
+            return self._create_layer_list_editor(value)
+
         if self.node_type == "Color Shift" and key == "tolerance":
             return self._create_color_shift_tolerance_editor(value)
 
@@ -1089,6 +1094,35 @@ class NodeParameterEditorDialog(QDialog):
             self._set_preview_label_pixmap(self._color_shift_preview_before, None)
             self._set_preview_label_pixmap(self._color_shift_preview_mask, None)
             self._set_preview_label_pixmap(self._color_shift_preview_after, None)
+
+    def _create_layer_list_editor(self, value: object) -> Tuple[QWidget, Callable[[], object]]:
+        """Create the specialized layer editor UI for Image Layer nodes."""
+        # Parse layers data
+        layers_data: List[Dict[str, object]] = []
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                if isinstance(item, dict):
+                    layers_data.append(item)
+
+        # Create layer widget
+        layer_widget = LayerListWidget(layers_data, self)
+
+        # Return widget and getter function
+        def get_layers() -> object:
+            edited_layers = layer_widget.get_layers_data()
+            # Convert to format expected by Image Layer node
+            result = []
+            for layer in edited_layers:
+                layer_dict = {
+                    "image_path": layer.get("image_path", ""),
+                    "mask": layer.get("mask"),
+                    "alpha": int(layer.get("alpha", 255)),
+                    "blend_amount": float(layer.get("blend_amount", 1.0)),
+                }
+                result.append(layer_dict)
+            return result
+
+        return layer_widget, get_layers
 
     @staticmethod
     def _parse_json_text(raw_text: str) -> object:
@@ -2084,7 +2118,6 @@ class NodeEditorWindow(QMainWindow):
                 "max_radius": 25.0,
             },
             "Image Layer": {
-                "layers": [],
                 "blend_mode": "alpha",
                 "output_mode": "RGBA",
             },

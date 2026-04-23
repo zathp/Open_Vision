@@ -299,11 +299,9 @@ def execute_image_layer_node(node: Dict[str, Any], inputs: List[Any]) -> Any:
     """
     Execute image layer composition node.
     
-    Node dict should contain:
-        - 'layers': list of layer configs (each with image, mask, alpha, blend_amount)
-        
     Inputs:
         - [0]: Base image (PIL Image from previous node)
+        - [1..n]: Layer images (PIL Images, optional - only connected layers are used)
         
     Returns:
         Composited PIL Image (RGBA mode)
@@ -319,30 +317,35 @@ def execute_image_layer_node(node: Dict[str, Any], inputs: List[Any]) -> Any:
     if not hasattr(base_image, "mode"):
         raise TypeError(f"Expected PIL Image for base, got {type(base_image)}")
     
-    # Extract layer configs from node
-    layers_data = node.get("layers", [])
-    if not layers_data:
-        # No layers, just return base
+    # If no layer inputs connected, just return the base image
+    if len(inputs) < 2:
         return base_image.convert("RGBA")
     
-    # Convert layer data to LayerInfo objects
+    # Convert input images to LayerInfo objects
+    # Each connected input port (after base) becomes a layer with default settings
     layers = []
-    for layer_data in layers_data:
-        if isinstance(layer_data, LayerInfo):
-            layers.append(layer_data)
-        elif isinstance(layer_data, dict):
-            # Handle both full data and paths
-            if "image" in layer_data and isinstance(layer_data["image"], str):
-                # It's a path
-                layer_data["image_path"] = layer_data.pop("image")
-                layer_data["image"] = None
-            layers.append(LayerInfo(**layer_data))
-        else:
-            raise TypeError(f"Invalid layer data: {type(layer_data)}")
+    for layer_idx, layer_image in enumerate(inputs[1:], start=1):
+        if layer_image is None:
+            # Skip unconnected ports
+            continue
+        
+        if not hasattr(layer_image, "mode"):
+            raise TypeError(
+                f"Layer {layer_idx} input is not a PIL Image, got {type(layer_image)}"
+            )
+        
+        # Create LayerInfo with connected image
+        # Use defaults: alpha=255 (fully opaque), blend_amount=1.0 (full contribution)
+        layer_info = LayerInfo(
+            image=layer_image,
+            alpha=255,
+            blend_amount=1.0,
+        )
+        layers.append(layer_info)
     
     blend_mode = node.get("blend_mode", "alpha")
     
-    # Composite
+    # Composite all layers onto base
     result = ImageLayerCompositor.composite_layers(
         base_image, layers, blend_mode
     )
@@ -352,7 +355,6 @@ def execute_image_layer_node(node: Dict[str, Any], inputs: List[Any]) -> Any:
 
 def create_image_layer_node(
     node_id: str,
-    layers: Optional[List[Dict[str, Any]]] = None,
     blend_mode: str = "alpha",
     output_mode: str = "RGBA",
 ) -> Dict[str, Any]:
@@ -361,44 +363,29 @@ def create_image_layer_node(
     
     Args:
         node_id: Unique node identifier
-        layers: List of layer dicts with:
-                - image: PIL Image object
-                - image_path: Path to image file
-                - mask: Optional PIL Image mask
-                - alpha: 0-255 opacity (default 255)
-                - blend_amount: 0.0-1.0 blend (default 1.0)
         blend_mode: Blending algorithm ('alpha' only currently)
         output_mode: Output image mode ('RGBA' or 'RGB')
         
     Returns:
         Node dict for graph
         
+    Note:
+        Layers are provided via input ports (inputs[1:]), not parameters.
+        - inputs[0] = base image
+        - inputs[1..8] = layer images from ports
+        
     Example:
-        >>> # Create layer node with multiple overlays
-        >>> node = create_image_layer_node(
-        ...     "compositor-1",
-        ...     layers=[
-        ...         {
-        ...             "image": overlay1,
-        ...             "alpha": 200,
-        ...             "blend_amount": 0.8,
-        ...         },
-        ...         {
-        ...             "image": overlay2,
-        ...             "mask": mask2,
-        ...             "alpha": 150,
-        ...             "blend_amount": 0.5,
-        ...         },
-        ...     ],
-        ... )
+        >>> # Create layer composition node
+        >>> node = create_image_layer_node("compositor-1")
+        >>> # In the graph, connect:
+        >>> # - Base image output → base_image input port
+        >>> # - Layer 1 output → layer_1 input port
+        >>> # - Layer 2 output → layer_2 input port
+        >>> # etc
     """
-    if layers is None:
-        layers = []
-    
     return {
         "id": node_id,
         "type": "Image Layer",
-        "layers": layers,
         "blend_mode": blend_mode,
         "output_mode": output_mode,
     }

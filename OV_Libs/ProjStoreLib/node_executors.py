@@ -339,10 +339,11 @@ def register_default_executors(registry: NodeExecutorRegistry) -> None:
     registry.register(
         node_type="Image Layer",
         executor=execute_image_layer_node,
-        description="Composite multiple layers with masks, alphas, and blend amounts",
-        input_count=1,
+        description="Composite multiple layers from input ports onto base image",
+        input_count=9,
         output_count=1,
         tags=["processing", "composition", "layer"],
+        input_ports=["base_image", "layer_1", "layer_2", "layer_3", "layer_4", "layer_5", "layer_6", "layer_7", "layer_8"],
     )
     
     registry.register(
