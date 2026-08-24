@@ -30,6 +30,7 @@ from typing import Any, Dict, List
 from OV_Libs.constants import (
     PROJECTS_DIR_NAME,
     PROJECT_EXTENSION,
+    PAINT_PROJECT_EXTENSION,
     SCHEMA_VERSION,
     SAFE_FILENAME_CHARS,
     FILENAME_REPLACEMENT_CHAR,
@@ -428,3 +429,217 @@ def save_project_graph(project_path: Path, nodes: List[Dict[str, Any]], connecti
     node_graph["connections"] = normalized_connections
     payload["node_graph"] = node_graph
     save_project_data(project_path, payload)
+
+
+# ---------------------------------------------------------------------------
+# Schema version compatibility
+# ---------------------------------------------------------------------------
+
+def check_schema_version(
+    payload: Dict[str, Any],
+    current_version: int = SCHEMA_VERSION,
+) -> tuple:
+    """
+    Check a project payload's schema version for loader compatibility.
+
+    Args:
+        payload: Loaded project payload dictionary.
+        current_version: The schema version supported by this build.
+
+    Returns:
+        Tuple of (status, message) where status is one of:
+        - "ok": version matches current (or was missing and defaulted).
+        - "upgrade": file is older; loaders fill defaults so it loads fine.
+        - "unsupported": file is newer; data may be lost when re-saved.
+    """
+    try:
+        file_version = int(payload.get(FIELD_SCHEMA_VERSION, current_version))
+    except (TypeError, ValueError):
+        return ("upgrade", "Missing or invalid schema version; loading with defaults.")
+
+    if file_version == current_version:
+        return ("ok", "")
+    if file_version < current_version:
+        return (
+            "upgrade",
+            f"Project schema v{file_version} will be upgraded to v{current_version} on save.",
+        )
+    return (
+        "unsupported",
+        f"Project schema v{file_version} is newer than supported v{current_version}; "
+        "newer fields may be dropped on save.",
+    )
+
+
+def filter_missing_image_paths(paths: List[str]) -> tuple:
+    """
+    Split an image path list into existing and missing entries.
+
+    Used when restoring a project's image list so the editor can warn about
+    and skip files that were moved or deleted.
+
+    Args:
+        paths: List of image path strings.
+
+    Returns:
+        Tuple of (existing_paths, missing_paths), both lists of strings,
+        preserving input order.
+    """
+    existing: List[str] = []
+    missing: List[str] = []
+    for raw_path in paths or []:
+        text_path = str(raw_path)
+        if Path(text_path).is_file():
+            existing.append(text_path)
+        else:
+            missing.append(text_path)
+    return (existing, missing)
+
+
+# ---------------------------------------------------------------------------
+# Paint project (.ovpaint) storage
+# ---------------------------------------------------------------------------
+
+PAINT_FIELD_CANVAS_WIDTH = "canvas_width"
+PAINT_FIELD_CANVAS_HEIGHT = "canvas_height"
+PAINT_FIELD_LAYERS = "layers"
+PAINT_FIELD_TOOL_PREFERENCES = "tool_preferences"
+PAINT_FIELD_EXPORT_SETTINGS = "export_settings"
+
+DEFAULT_PAINT_CANVAS_SIZE = 800
+
+
+def _sanitize_project_filename(project_name: str) -> str:
+    safe_name = "".join(
+        c if c.isalnum() or c in SAFE_FILENAME_CHARS else FILENAME_REPLACEMENT_CHAR
+        for c in project_name
+    ).strip(FILENAME_REPLACEMENT_CHAR)
+    return safe_name or "new_project"
+
+
+def _unique_project_path(projects_dir: Path, safe_name: str, extension: str) -> Path:
+    project_path = projects_dir / f"{safe_name}{extension}"
+    counter = 1
+    while project_path.exists():
+        project_path = projects_dir / f"{safe_name}_{counter}{extension}"
+        counter += 1
+    return project_path
+
+
+def create_paint_project_file(base_dir: Path, project_name: str) -> Path:
+    """
+    Create a new paint project file with default structure.
+
+    Args:
+        base_dir: Base directory containing the Projects folder
+        project_name: Human-readable name for the project
+
+    Returns:
+        Path to the created .ovpaint file
+
+    Raises:
+        ValueError: If project_name is empty after sanitization
+    """
+    projects_dir = get_projects_dir(base_dir)
+    safe_name = _sanitize_project_filename(project_name)
+    project_path = _unique_project_path(projects_dir, safe_name, PAINT_PROJECT_EXTENSION)
+
+    payload: Dict[str, Any] = {
+        FIELD_SCHEMA_VERSION: SCHEMA_VERSION,
+        FIELD_NAME: project_name,
+        FIELD_CREATED_AT: datetime.now().isoformat(timespec="seconds"),
+        PAINT_FIELD_CANVAS_WIDTH: DEFAULT_PAINT_CANVAS_SIZE,
+        PAINT_FIELD_CANVAS_HEIGHT: DEFAULT_PAINT_CANVAS_SIZE,
+        PAINT_FIELD_LAYERS: [],
+        PAINT_FIELD_TOOL_PREFERENCES: {},
+        PAINT_FIELD_EXPORT_SETTINGS: {},
+    }
+
+    project_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return project_path
+
+
+def list_paint_project_files(base_dir: Path) -> List[Path]:
+    """List all paint project files in the Projects directory."""
+    projects_dir = get_projects_dir(base_dir)
+    return sorted(projects_dir.glob(f"*{PAINT_PROJECT_EXTENSION}"))
+
+
+def load_paint_project_data(project_path: Path) -> Dict[str, Any]:
+    """
+    Load a paint project payload with validation and defaults.
+
+    Args:
+        project_path: Path to the .ovpaint file.
+
+    Returns:
+        Validated payload dict. Missing fields are filled with defaults;
+        layer metadata is normalized (id/name/visible/opacity/image_file).
+    """
+    try:
+        payload = json.loads(project_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        payload = {}
+
+    if not isinstance(payload, dict):
+        payload = {}
+
+    payload.setdefault(FIELD_SCHEMA_VERSION, SCHEMA_VERSION)
+    payload.setdefault(FIELD_NAME, project_path.stem)
+    payload.setdefault(FIELD_CREATED_AT, datetime.now().isoformat(timespec="seconds"))
+
+    try:
+        width = int(payload.get(PAINT_FIELD_CANVAS_WIDTH, DEFAULT_PAINT_CANVAS_SIZE))
+    except (TypeError, ValueError):
+        width = DEFAULT_PAINT_CANVAS_SIZE
+    try:
+        height = int(payload.get(PAINT_FIELD_CANVAS_HEIGHT, DEFAULT_PAINT_CANVAS_SIZE))
+    except (TypeError, ValueError):
+        height = DEFAULT_PAINT_CANVAS_SIZE
+    payload[PAINT_FIELD_CANVAS_WIDTH] = max(1, width)
+    payload[PAINT_FIELD_CANVAS_HEIGHT] = max(1, height)
+
+    layers = payload.get(PAINT_FIELD_LAYERS)
+    if not isinstance(layers, list):
+        layers = []
+    normalized_layers: List[Dict[str, Any]] = []
+    for layer in layers:
+        if not isinstance(layer, dict):
+            continue
+        normalized_layers.append({
+            "id": str(layer.get("id") or uuid.uuid4()),
+            "name": str(layer.get("name") or "Layer"),
+            "visible": bool(layer.get("visible", True)),
+            "opacity": min(255, max(0, int(layer.get("opacity", 255)))),
+            "image_file": str(layer.get("image_file") or ""),
+        })
+    payload[PAINT_FIELD_LAYERS] = normalized_layers
+
+    tool_preferences = payload.get(PAINT_FIELD_TOOL_PREFERENCES)
+    if not isinstance(tool_preferences, dict):
+        tool_preferences = {}
+    payload[PAINT_FIELD_TOOL_PREFERENCES] = tool_preferences
+
+    export_settings = payload.get(PAINT_FIELD_EXPORT_SETTINGS)
+    if not isinstance(export_settings, dict):
+        export_settings = {}
+    payload[PAINT_FIELD_EXPORT_SETTINGS] = export_settings
+
+    return payload
+
+
+def save_paint_project_data(project_path: Path, payload: Dict[str, Any]) -> None:
+    """Save a paint project payload, stamping the current schema version."""
+    payload[FIELD_SCHEMA_VERSION] = SCHEMA_VERSION
+    project_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def get_paint_layers_dir(project_path: Path) -> Path:
+    """
+    Return (and create) the sidecar directory holding paint layer images.
+
+    The directory sits next to the .ovpaint file as "<stem>_layers".
+    """
+    layers_dir = project_path.parent / f"{project_path.stem}_layers"
+    layers_dir.mkdir(parents=True, exist_ok=True)
+    return layers_dir

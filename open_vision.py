@@ -19,7 +19,15 @@ from PyQt5.QtWidgets import (
 )
 
 from node_editor_window import NodeEditorWindow
-from OV_Libs.ProjStoreLib.project_store import create_project_file, list_project_files, load_project_name
+from OV_Libs.ProjStoreLib.project_store import (
+    PAINT_PROJECT_EXTENSION,
+    PROJECT_EXTENSION,
+    create_paint_project_file,
+    create_project_file,
+    list_paint_project_files,
+    list_project_files,
+    load_project_name,
+)
 
 
 class OpenVisionMainWindow(QMainWindow):
@@ -55,7 +63,10 @@ class OpenVisionMainWindow(QMainWindow):
         self.label_menu_title = QLabel("Open Vision Project Menu")
         self.label_menu_title.setAlignment(Qt.AlignCenter)
         self.label_menu_title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        self.label_project_hint = QLabel("Create a project or pick an existing project file to open the node canvas.")
+        self.label_project_hint = QLabel(
+            "Create a project or pick an existing project file to launch its editor. "
+            "Supports Node Graph (.ovproj) and Paint (.ovpaint) projects."
+        )
         self.label_project_hint.setWordWrap(True)
         self.label_selected_project = QLabel("Selected project: none")
 
@@ -83,12 +94,17 @@ class OpenVisionMainWindow(QMainWindow):
         self.projects_list.itemDoubleClicked.connect(self.launch_selected_project)
 
     def refresh_projects(self) -> None:
-        self.project_files = list_project_files(self.base_dir)
+        node_files = list_project_files(self.base_dir)
+        paint_files = list_paint_project_files(self.base_dir)
+        self.project_files = sorted(
+            [*node_files, *paint_files], key=lambda path: path.name.lower()
+        )
         self.projects_list.clear()
 
         for project_path in self.project_files:
             project_name = load_project_name(project_path)
-            self.projects_list.addItem(f"{project_name} ({project_path.name})")
+            type_label = "Paint" if project_path.suffix == PAINT_PROJECT_EXTENSION else "Node Graph"
+            self.projects_list.addItem(f"{project_name} ({project_path.name} · {type_label})")
 
         if self.project_files:
             self.projects_list.setCurrentRow(0)
@@ -109,17 +125,38 @@ class OpenVisionMainWindow(QMainWindow):
         if not ok or not name.strip():
             return
 
-        project_path = create_project_file(self.base_dir, name.strip())
+        project_type, ok = QInputDialog.getItem(
+            self,
+            "Project Type",
+            "Select project type:",
+            ["Node Graph (.ovproj)", "Paint (.ovpaint)"],
+            0,
+            False,
+        )
+        if not ok:
+            return
+
+        is_paint = str(project_type).startswith("Paint")
+        if is_paint:
+            project_path = create_paint_project_file(self.base_dir, name.strip())
+        else:
+            project_path = create_project_file(self.base_dir, name.strip())
+
         self.refresh_projects()
         self._select_project(project_path)
-        QMessageBox.information(self, "Project Created", f"Created project file:\n{project_path}")
+        type_name = "Paint" if is_paint else "Node Graph"
+        QMessageBox.information(
+            self,
+            "Project Created",
+            f"Created {type_name} project file:\n{project_path}",
+        )
 
     def open_project_file(self) -> None:
         selected_file, _ = QFileDialog.getOpenFileName(
             self,
             "Open Project File",
             str(self.base_dir),
-            "Open Vision Project (*.ovproj)",
+            f"Open Vision Projects (*{PROJECT_EXTENSION} *{PAINT_PROJECT_EXTENSION})",
         )
         if not selected_file:
             return
@@ -142,7 +179,20 @@ class OpenVisionMainWindow(QMainWindow):
         self.launch_project(self.project_files[index])
 
     def launch_project(self, project_path: Path) -> None:
-        self.editor_window = NodeEditorWindow(project_path=project_path)
+        if project_path.suffix == PAINT_PROJECT_EXTENSION:
+            try:
+                from paint_editor_window import PaintEditorWindow
+            except ImportError:
+                QMessageBox.warning(
+                    self,
+                    "Paint Editor Unavailable",
+                    "The paint editor is not available in this build.\n"
+                    "It will be included in an upcoming update.",
+                )
+                return
+            self.editor_window = PaintEditorWindow(project_path=project_path)
+        else:
+            self.editor_window = NodeEditorWindow(project_path=project_path)
         self.editor_window.show()
 
     def _select_project(self, project_path: Path) -> None:

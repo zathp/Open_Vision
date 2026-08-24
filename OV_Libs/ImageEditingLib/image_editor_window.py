@@ -14,12 +14,14 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from OV_Libs.ImageEditingLib.image_editing_ops import apply_color_mapping, build_identity_mapping, extract_unique_colors, save_images
 from OV_Libs.ImageEditingLib.image_models import ImageRecord, RgbaColor
+from OV_Libs.Initial_Forms.integration import shift_image_hsv
 from OV_Libs.pillow_compat import Image
 
 
@@ -57,6 +59,15 @@ class OpenVisionEditorWindow(QMainWindow):
         self.btn_pick_base = QPushButton("Pick Base Color")
         self.btn_select_range = QPushButton("Select Colors in Range")
 
+        self.spin_hue_shift = QSpinBox()
+        self.spin_hue_shift.setRange(-180, 180)
+        self.spin_sat_shift = QSpinBox()
+        self.spin_sat_shift.setRange(-100, 100)
+        self.spin_val_shift = QSpinBox()
+        self.spin_val_shift.setRange(-100, 100)
+        self.btn_apply_hsv_selected = QPushButton("Apply HSV to Selected")
+        self.btn_apply_hsv_all = QPushButton("Apply HSV to All")
+
         self.images_list = QListWidget()
         self.original_colors_list = QListWidget()
         self.original_colors_list.setSelectionMode(QAbstractItemView.MultiSelection)
@@ -83,6 +94,17 @@ class OpenVisionEditorWindow(QMainWindow):
         controls_col.addWidget(self.label_base_color)
         controls_col.addWidget(self.btn_pick_base)
         controls_col.addWidget(self.btn_select_range)
+
+        hsv_row = QHBoxLayout()
+        hsv_row.addWidget(QLabel("Hue:"))
+        hsv_row.addWidget(self.spin_hue_shift)
+        hsv_row.addWidget(QLabel("Sat:"))
+        hsv_row.addWidget(self.spin_sat_shift)
+        hsv_row.addWidget(QLabel("Val:"))
+        hsv_row.addWidget(self.spin_val_shift)
+        controls_col.addLayout(hsv_row)
+        controls_col.addWidget(self.btn_apply_hsv_selected)
+        controls_col.addWidget(self.btn_apply_hsv_all)
         controls_col.addWidget(self.btn_apply_current)
         controls_col.addWidget(self.btn_apply_all)
         controls_col.addWidget(self.btn_save_current)
@@ -100,6 +122,8 @@ class OpenVisionEditorWindow(QMainWindow):
         self.replacement_colors_list.itemDoubleClicked.connect(self.change_replacement_color)
         self.btn_pick_base.clicked.connect(self.pick_base_color)
         self.btn_select_range.clicked.connect(self.select_by_range)
+        self.btn_apply_hsv_selected.clicked.connect(self.apply_hsv_to_selected)
+        self.btn_apply_hsv_all.clicked.connect(self.apply_hsv_to_all)
         self.btn_apply_current.clicked.connect(self.apply_to_current)
         self.btn_apply_all.clicked.connect(self.apply_to_all)
         self.btn_save_current.clicked.connect(self.save_current)
@@ -195,11 +219,41 @@ class OpenVisionEditorWindow(QMainWindow):
                 if item is not None:
                     item.setSelected(True)
 
+    def _selected_unique_colors(self) -> List[RgbaColor]:
+        return [
+            self.unique_colors[index]
+            for index in range(self.original_colors_list.count())
+            if self.original_colors_list.item(index).isSelected()
+        ]
+
+    def _apply_hsv_shift(self, only_colors: Optional[List[RgbaColor]]) -> None:
+        if self.current_image_index is None:
+            QMessageBox.information(self, "No Image", "Load and select an image first.")
+            return
+
+        current = self.images[self.current_image_index]
+        shifted = shift_image_hsv(
+            current.modified,
+            hue_shift=self.spin_hue_shift.value(),
+            sat_shift=self.spin_sat_shift.value(),
+            val_shift=self.spin_val_shift.value(),
+            only_colors=only_colors,
+        )
+        current.modified = shifted
+        self.unique_colors = extract_unique_colors(shifted)
+        self.color_mappings = build_identity_mapping(self.unique_colors)
+        self.populate_color_lists()
+        self.refresh_previews()
+
     def apply_hsv_to_selected(self) -> None:
-        raise NotImplementedError("Implement HSV mass-edit for selected colors")
+        selected = self._selected_unique_colors()
+        if not selected:
+            QMessageBox.information(self, "No Selection", "Select colors in the list first.")
+            return
+        self._apply_hsv_shift(selected)
 
     def apply_hsv_to_all(self) -> None:
-        raise NotImplementedError("Implement HSV mass-edit for all replacement mappings")
+        self._apply_hsv_shift(None)
 
     def apply_to_current(self) -> None:
         if self.current_image_index is None:

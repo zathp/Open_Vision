@@ -7,6 +7,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
+from PIL import Image
+
 from PyQt5.QtCore import QLineF, QPoint, QPointF, QRectF, Qt
 from PyQt5.QtGui import QBrush, QColor, QImage, QKeySequence, QPen, QPixmap
 from PyQt5.QtWidgets import (
@@ -52,7 +54,18 @@ from OV_Libs.ProjStoreLib.pipeline_builder import (
     execute_pipeline,
     get_pipeline_summary,
 )
-from OV_Libs.ProjStoreLib.project_store import load_project_graph, save_project_graph
+from OV_Libs.ProjStoreLib.project_store import (
+    check_schema_version,
+    filter_missing_image_paths,
+    load_project_data,
+    load_project_graph,
+    save_project_data,
+    save_project_graph,
+)
+from OV_Libs.ExportLib.blender_export import (
+    CONFLICT_PROMPT,
+    batch_export_albedo,
+)
 from layer_editor import LayerListWidget
 
 
@@ -1807,6 +1820,7 @@ class NodeEditorWindow(QMainWindow):
         self.btn_undo = QPushButton("Undo")
         self.btn_redo = QPushButton("Redo")
         self.btn_run_outputs = QPushButton("Run Outputs")
+        self.btn_export_albedo = QPushButton("Export Base Color Maps...")
         self.btn_fit_view = QPushButton("Fit Canvas")
         self.btn_reset_zoom = QPushButton("Reset Zoom")
         self.btn_save_layout = QPushButton("Save Node Layout")
@@ -1819,6 +1833,7 @@ class NodeEditorWindow(QMainWindow):
         controls.addWidget(self.btn_undo)
         controls.addWidget(self.btn_redo)
         controls.addWidget(self.btn_run_outputs)
+        controls.addWidget(self.btn_export_albedo)
         controls.addWidget(self.btn_fit_view)
         controls.addWidget(self.btn_reset_zoom)
         controls.addWidget(self.btn_save_layout)
@@ -1836,6 +1851,7 @@ class NodeEditorWindow(QMainWindow):
         self.btn_undo.clicked.connect(self.undo_graph_edit)
         self.btn_redo.clicked.connect(self.redo_graph_edit)
         self.btn_run_outputs.clicked.connect(self.run_outputs)
+        self.btn_export_albedo.clicked.connect(self.export_base_color_maps)
         self.btn_fit_view.clicked.connect(self.fit_canvas_to_scene)
         self.btn_reset_zoom.clicked.connect(self.reset_canvas_zoom)
         self.btn_save_layout.clicked.connect(self.save_layout)
@@ -2117,6 +2133,10 @@ class NodeEditorWindow(QMainWindow):
                 "blur_type": "gaussian",
                 "max_radius": 25.0,
             },
+            "Brightness Contrast": {
+                "brightness": 1.0,
+                "contrast": 1.0,
+            },
             "Image Layer": {
                 "blend_mode": "alpha",
                 "output_mode": "RGBA",
@@ -2142,6 +2162,39 @@ class NodeEditorWindow(QMainWindow):
             }
         )
         self._initialize_history()
+        self._report_project_load_warnings()
+
+    def _report_project_load_warnings(self) -> None:
+        try:
+            payload = load_project_data(self.project_path)
+        except Exception:
+            return
+
+        status, message = check_schema_version(payload)
+        if status == "unsupported":
+            QMessageBox.warning(
+                self,
+                "Schema Version",
+                message,
+            )
+
+        image_paths: List[str] = []
+        for node in self.collect_nodes():
+            if str(node.get("type", "")) == "Image Import":
+                file_path = str(node.get("file_path", "") or "")
+                if file_path:
+                    image_paths.append(file_path)
+
+        _, missing = filter_missing_image_paths(image_paths)
+        if missing:
+            missing_list = "\n".join(f"• {path}" for path in missing[:10])
+            extra = "" if len(missing) <= 10 else f"\n…and {len(missing) - 10} more"
+            QMessageBox.warning(
+                self,
+                "Missing Image Files",
+                "Some project images could not be found and were skipped:\n"
+                f"{missing_list}{extra}",
+            )
 
     def _create_node_item(
         self,
@@ -2186,6 +2239,12 @@ class NodeEditorWindow(QMainWindow):
         node_id = str(uuid.uuid4())
         input_ports, output_ports = self._node_port_names(node_type)
         node_properties = self._default_node_properties(node_type)
+
+        if node_type == "Output":
+            presets = self._load_output_presets()
+            if presets:
+                for key, value in presets.items():
+                    node_properties.setdefault(key, deepcopy(value))
 
         max_ports = max(len(input_ports), len(output_ports), 1)
         default_width = 320.0
@@ -3111,7 +3170,126 @@ class NodeEditorWindow(QMainWindow):
     def save_layout(self) -> None:
         nodes = self.collect_nodes()
         save_project_graph(self.project_path, nodes, self.connections)
+        self._persist_output_presets(nodes)
         QMessageBox.information(self, "Saved", "Project node locations saved.")
+
+    def _load_output_presets(self) -> Dict[str, object]:
+        try:
+            payload = load_project_data(self.project_path)
+        except Exception:
+            return {}
+        presets = payload.get("output_presets")
+        return dict(presets) if isinstance(presets, dict) else {}
+
+    PRESET_SOURCE_NODE = "Output"
+    PRESET_KEYS = ("output_path", "save_format", "quality", "create_directories", "overwrite")
+
+    def _persist_output_presets(self, nodes: List[Dict[str, object]]) -> None:
+        source = next(
+            (node for node in nodes if str(node.get("type", "")) == self.PRESET_SOURCE_NODE),
+            None,
+        )
+        if source is None:
+            return
+        presets = {
+            key: deepcopy(source.get(key))
+            for key in self.PRESET_KEYS
+            if source.get(key) is not None
+        }
+        if not presets:
+            return
+        try:
+            payload = load_project_data(self.project_path)
+            existing = payload.get("output_presets")
+            merged = dict(existing) if isinstance(existing, dict) else {}
+            merged.update(presets)
+            payload["output_presets"] = merged
+            save_project_data(self.project_path, payload)
+        except Exception as error:
+            self.statusBar().showMessage(f"Could not save output presets: {error}", 4000)
+
+    def export_base_color_maps(self) -> None:
+        """Run the graph and export each Output node result as a Blender albedo map."""
+        nodes = self.collect_nodes()
+        if not nodes:
+            QMessageBox.information(self, "Export Base Color", "No nodes available to export.")
+            return
+
+        pipeline, is_valid, errors = build_pipeline_from_graph(nodes, self.connections)
+        if errors and not is_valid:
+            QMessageBox.warning(self, "Pipeline Invalid", "\n".join(errors))
+            return
+
+        node_executors: Dict[str, Callable[[Dict[str, object], List[object]], object]] = {}
+        try:
+            for node in nodes:
+                node_type = str(node.get("type", "")).strip()
+                if node_type and node_type not in node_executors:
+                    node_executors[node_type] = self.node_registry.get_executor(node_type)
+        except KeyError as error:
+            QMessageBox.warning(self, "Missing Executor", str(error))
+            return
+
+        output_node_ids = [
+            str(node.get("id"))
+            for node in nodes
+            if str(node.get("type", "")) == "Output"
+        ]
+        if not output_node_ids:
+            QMessageBox.information(
+                self, "Export Base Color", "Add an Output node to define an export point."
+            )
+            return
+
+        directory = QFileDialog.getExistingDirectory(self, "Base Color Export Directory")
+        if not directory:
+            return
+
+        try:
+            results = execute_pipeline(pipeline, node_executors, use_threading=True)
+        except Exception as error:
+            QMessageBox.warning(self, "Execution Failed", str(error))
+            return
+
+        exported: Dict[str, Image.Image] = {}
+        for node_id in output_node_ids:
+            image = self._extract_preview_image(results.get(node_id))
+            if image is not None:
+                exported[node_id] = image
+
+        if not exported:
+            QMessageBox.warning(
+                self,
+                "Export Base Color",
+                "No exportable images were produced by the Output nodes.",
+            )
+            return
+
+        context = {"project_name": self.project_path.stem}
+        written, export_errors = batch_export_albedo(
+            exported,
+            Path(directory),
+            context=context,
+            conflict_policy=CONFLICT_PROMPT,
+            prompt_callback=self._albedo_conflict_prompt,
+            save_format="PNG",
+        )
+
+        summary_lines = [f"Exported {len(written)} albedo map(s)."]
+        if export_errors:
+            summary_lines.append("Skipped:")
+            summary_lines.extend(f"• {error}" for error in export_errors[:10])
+        QMessageBox.information(self, "Export Base Color", "\n".join(summary_lines))
+        self.statusBar().showMessage(f"Albedo export complete: {directory}", 5000)
+
+    def _albedo_conflict_prompt(self, candidate):
+        answer = QMessageBox.question(
+            self,
+            "File Exists",
+            f"{candidate.name} already exists.\nOverwrite?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        return candidate if answer == QMessageBox.Yes else None
 
     def closeEvent(self, event) -> None:
         try:

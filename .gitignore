@@ -5,3 +5,4 @@
 /Projects/**
 !/Projects/Share/**
 *.pyc
+.omo/

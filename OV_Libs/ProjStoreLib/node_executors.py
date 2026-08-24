@@ -307,6 +307,7 @@ def register_default_executors(registry: NodeExecutorRegistry) -> None:
     from OV_Libs.NodesLib.image_layer_node import execute_image_layer_node
     from OV_Libs.NodesLib.blur_node import execute_blur_node
     from OV_Libs.NodesLib.mask_blur_node import execute_mask_blur_node
+    from OV_Libs.NodesLib.brightness_contrast_node import execute_brightness_contrast_node
     
     registry.register(
         node_type="Image Import",
@@ -363,7 +364,16 @@ def register_default_executors(registry: NodeExecutorRegistry) -> None:
         output_count=1,
         tags=["processing", "blur", "filter", "mask"],
     )
-    
+
+    registry.register(
+        node_type="Brightness Contrast",
+        executor=execute_brightness_contrast_node,
+        description="Adjust image brightness and contrast",
+        input_count=1,
+        output_count=1,
+        tags=["processing", "color", "filter"],
+    )
+
     logger.info("Registered default node executors")
 
 

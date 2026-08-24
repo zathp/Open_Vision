@@ -86,6 +86,35 @@ class OutputNodeConfig:
         return kwargs
 
 
+VALID_STRFTIME_DIRECTIVES = frozenset(
+    "aAbBcCdDeFfGgHIjmMnpPrRsStTuUVwWxXyYzZ%"
+)
+
+
+def _validate_strftime_format(fmt: str) -> None:
+    """
+    Raise ValueError if fmt contains unsupported % directives.
+
+    Some platforms (glibc) silently pass invalid directives through
+    strftime instead of raising, so validation is done explicitly.
+    """
+    index = 0
+    while index < len(fmt):
+        char = fmt[index]
+        if char != "%":
+            index += 1
+            continue
+        if index + 1 >= len(fmt):
+            raise ValueError(f"Trailing '%' in format string: '{fmt}'")
+        directive = fmt[index + 1]
+        if directive == "%":
+            index += 2
+            continue
+        if directive not in VALID_STRFTIME_DIRECTIVES:
+            raise ValueError(f"Invalid strftime directive '%{directive}' in format: '{fmt}'")
+        index += 2
+
+
 class OutputNodeHandler:
     """Handles dynamic filename generation and file I/O for output nodes."""
     
@@ -238,6 +267,7 @@ class OutputNodeHandler:
         def replacer(match):
             fmt = match.group(1) or self.DEFAULT_DATETIME_FORMAT
             try:
+                _validate_strftime_format(fmt)
                 return datetime.now().strftime(fmt)
             except (ValueError, TypeError) as e:
                 raise ValueError(
@@ -251,6 +281,7 @@ class OutputNodeHandler:
         def replacer(match):
             fmt = match.group(1) or self.DEFAULT_DATE_FORMAT
             try:
+                _validate_strftime_format(fmt)
                 return datetime.now().strftime(fmt)
             except (ValueError, TypeError) as e:
                 raise ValueError(
@@ -264,6 +295,7 @@ class OutputNodeHandler:
         def replacer(match):
             fmt = match.group(1) or self.DEFAULT_TIME_FORMAT
             try:
+                _validate_strftime_format(fmt)
                 return datetime.now().strftime(fmt)
             except (ValueError, TypeError) as e:
                 raise ValueError(
