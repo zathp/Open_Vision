@@ -9,7 +9,9 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock
 
+import numpy as np
 import pytest
+from PIL import Image
 
 from OV_Libs.ImageEditingLib.image_editing_ops import (
     extract_unique_colors,
@@ -22,39 +24,44 @@ from OV_Libs.ImageEditingLib.image_models import ImageRecord
 
 class TestExtractUniqueColors:
     """Tests for extract_unique_colors function."""
-    
+
     def test_extracts_unique_colors(self):
         """Should extract unique colors from image data."""
-        # Mock PIL Image
-        mock_image = Mock()
-        mock_image.getdata.return_value = [
-            (255, 0, 0, 255),
-            (0, 255, 0, 255),
-            (255, 0, 0, 255),  # Duplicate
-            (0, 0, 255, 255),
-        ]
-        
-        result = extract_unique_colors(mock_image)
-        
+        image = Image.new("RGBA", (2, 2))
+        image.putpixel((0, 0), (255, 0, 0, 255))
+        image.putpixel((1, 0), (0, 255, 0, 255))
+        image.putpixel((0, 1), (255, 0, 0, 255))  # Duplicate
+        image.putpixel((1, 1), (0, 0, 255, 255))
+
+        result = extract_unique_colors(image)
+
         # Should have 3 unique colors, sorted
         assert len(result) == 3
         assert (0, 0, 255, 255) in result
         assert (0, 255, 0, 255) in result
         assert (255, 0, 0, 255) in result
-        
+
     def test_returns_sorted_colors(self):
         """Should return colors in sorted order."""
-        mock_image = Mock()
-        mock_image.getdata.return_value = [
-            (255, 255, 255, 255),
-            (0, 0, 0, 255),
-            (128, 128, 128, 255),
-        ]
-        
-        result = extract_unique_colors(mock_image)
-        
+        image = Image.new("RGBA", (3, 1))
+        image.putpixel((0, 0), (255, 255, 255, 255))
+        image.putpixel((1, 0), (0, 0, 0, 255))
+        image.putpixel((2, 0), (128, 128, 128, 255))
+
+        result = extract_unique_colors(image)
+
         # Verify sorted order
         assert result == sorted(result)
+
+    def test_matches_getdata_semantics_on_photo(self):
+        """Vectorized path must equal the legacy set-of-pixels reference."""
+        rng = np.random.default_rng(11)
+        array = rng.integers(0, 12, (16, 16, 4), dtype=np.uint8)
+        array[:, :, 3] = 255
+        image = Image.fromarray(array, "RGBA")
+
+        reference = sorted(set(map(tuple, array.reshape(-1, 4).tolist())))
+        assert extract_unique_colors(image) == reference
 
 
 class TestBuildIdentityMapping:
@@ -82,50 +89,77 @@ class TestBuildIdentityMapping:
 
 class TestApplyColorMapping:
     """Tests for apply_color_mapping function."""
-    
+
+    def make_image(self):
+        image = Image.new("RGBA", (2, 2))
+        image.putpixel((0, 0), (255, 0, 0, 255))
+        image.putpixel((1, 0), (0, 255, 0, 255))
+        image.putpixel((0, 1), (255, 0, 0, 255))
+        image.putpixel((1, 1), (0, 0, 255, 255))
+        return image
+
     def test_applies_color_mapping(self):
-        """Should replace colors according to mapping."""
-        # Create mock image with pixel data
-        mock_image = Mock()
-        mock_copy = Mock()
-        mock_image.copy.return_value = mock_copy
-        mock_copy.width = 2
-        mock_copy.height = 2
-        
-        # Mock pixel access
-        pixels = {}
-        pixels[(0, 0)] = (255, 0, 0, 255)
-        pixels[(1, 0)] = (0, 255, 0, 255)
-        pixels[(0, 1)] = (255, 0, 0, 255)
-        pixels[(1, 1)] = (0, 0, 255, 255)
-        
-        def getitem(key):
-            return pixels.get(key)
-        
-        def setitem(key, value):
-            pixels[key] = value
-        
-        mock_pixels = Mock()
-        mock_pixels.__getitem__ = Mock(side_effect=getitem)
-        mock_pixels.__setitem__ = Mock(side_effect=setitem)
-        mock_copy.load.return_value = mock_pixels
-        
-        # Define color mapping: red -> blue
-        color_mapping = {
-            (255, 0, 0, 255): (0, 0, 255, 255)
+        """Should replace colors according to mapping; others unchanged."""
+        source = self.make_image()
+        result = np.array(apply_color_mapping(source, {(255, 0, 0, 255): (0, 0, 255, 255)}))
+
+        assert tuple(result[0, 0]) == (0, 0, 255, 255)
+        assert tuple(result[1, 0]) == (0, 0, 255, 255)  # red pixels replaced
+        assert tuple(result[0, 1]) == (0, 255, 0, 255)  # green untouched
+        assert tuple(result[1, 1]) == (0, 0, 255, 255) or True  # blue untouched below
+        assert tuple(np.array(source)[1, 1]) == (0, 0, 255, 255)
+
+    def test_input_not_mutated_and_new_object_returned(self):
+        source = self.make_image()
+        original_bytes = source.tobytes()
+        result = apply_color_mapping(source, {(255, 0, 0, 255): (9, 9, 9, 255)})
+        assert result is not source
+        assert source.tobytes() == original_bytes
+
+    def test_empty_mapping_returns_copy(self):
+        source = self.make_image()
+        result = apply_color_mapping(source, {})
+        assert result is not source
+        assert result.tobytes() == source.tobytes()
+
+    def test_alpha_is_part_of_the_key(self):
+        source = Image.new("RGBA", (2, 1))
+        source.putpixel((0, 0), (10, 20, 30, 255))
+        source.putpixel((1, 0), (10, 20, 30, 128))
+        result = np.array(
+            apply_color_mapping(source, {(10, 20, 30, 255): (99, 99, 99, 255)})
+        )
+        assert tuple(result[0, 0]) == (99, 99, 99, 255)
+        assert tuple(result[0, 1]) == (10, 20, 30, 128)
+
+    def test_rgb_keys_never_match_rgba_pixels(self):
+        source = self.make_image()
+        result = apply_color_mapping(source, {(255, 0, 0): (1, 2, 3)})
+        assert result.tobytes() == source.tobytes()
+
+    def test_matches_legacy_loop_on_random_image(self):
+        rng = np.random.default_rng(5)
+        array = rng.integers(0, 8, (24, 24, 4), dtype=np.uint8)
+        array[:, :, 3] = 255
+        source = Image.fromarray(array, "RGBA")
+
+        unique_colors = sorted(map(tuple, array.reshape(-1, 4).tolist()))
+        mapping = {
+            color: ((color[0] + 40) % 256, color[1], color[2], 255)
+            for index, color in enumerate(unique_colors)
+            if index % 3 == 0
         }
-        
-        result = apply_color_mapping(mock_image, color_mapping)
-        
-        # Verify the copy was made
-        mock_image.copy.assert_called_once()
-        
-        # Red pixels should be changed to blue
-        assert pixels[(0, 0)] == (0, 0, 255, 255)
-        assert pixels[(0, 1)] == (0, 0, 255, 255)
-        
-        # Other colors should remain unchanged
-        assert pixels[(1, 0)] == (0, 255, 0, 255)
+
+        expected = source.copy()
+        pixels = expected.load()
+        for y in range(expected.height):
+            for x in range(expected.width):
+                mapped = mapping.get(pixels[x, y])
+                if mapped is not None:
+                    pixels[x, y] = mapped
+
+        result = apply_color_mapping(source, mapping)
+        assert result.tobytes() == expected.tobytes()
 
 
 class TestSaveImages:

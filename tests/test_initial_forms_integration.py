@@ -62,6 +62,33 @@ class TestDownsampleImage:
         local = downsample_image(source, (4, 4))
         assert np.array_equal(np.array(legacy), np.array(local))
 
+    def test_matches_legacy_function_on_gradient(self, tmp_path):
+        """Vectorized result stays within 1/255 of the scalar original.
+
+        Floating-point summation order differs (np.add.reduceat vs
+        sequential np.mean over a Python-built list), so per-channel
+        values may round to adjacent integers after int() truncation.
+        """
+        from OV_Libs.Initial_Forms.Downsampler import downsample_image_hsv
+
+        gradient = np.zeros((48, 64, 4), dtype=np.uint8)
+        gradient[..., 0] = np.linspace(0, 255, 64, dtype=np.uint8)[None, :]
+        gradient[..., 1] = np.linspace(0, 255, 48, dtype=np.uint8)[:, None]
+        gradient[..., 2] = 128
+        gradient[..., 3] = 255
+        gradient[10:20, 20:30, 3] = 0
+
+        path = tmp_path / "grad.png"
+        Image.fromarray(gradient, "RGBA").save(path)
+        source = Image.fromarray(gradient, "RGBA")
+
+        legacy = np.array(downsample_image_hsv(str(path), (12, 9)))
+        local = np.array(downsample_image(source, (12, 9)))
+
+        assert legacy.shape == local.shape
+        assert np.all(legacy[:, :, 3] == local[:, :, 3])
+        assert np.max(np.abs(legacy[:, :, :3].astype(int) - local[:, :, :3].astype(int))) <= 1
+
 
 class TestMirrorImage:
 
@@ -217,3 +244,80 @@ class TestHsvShift:
 
     def test_selection_modes_constant(self):
         assert set(SELECTION_MODES) == {"rgb_distance", "rgb_range", "hsv_range"}
+
+
+class TestVectorizedParity:
+    """Cross-checks vectorized paths against scalar colorsys references."""
+
+    @staticmethod
+    def _random_image(seed=3, size=(24, 20)):
+        rng = np.random.default_rng(seed)
+        array = rng.integers(0, 256, (size[1], size[0], 4), dtype=np.uint8)
+        return Image.fromarray(array, "RGBA")
+
+    @staticmethod
+    def _scalar_shift_reference(image, hue, sat, val, restrict):
+        from OV_Libs.Initial_Forms.integration import adjust_color_hsv
+
+        array = np.array(image.convert("RGBA"))
+        out = array.copy()
+        for y in range(array.shape[0]):
+            for x in range(array.shape[1]):
+                original = tuple(int(c) for c in array[y, x][:4])
+                if restrict is not None and original not in {
+                    tuple(int(c) for c in color[:4]) for color in restrict
+                }:
+                    continue
+                out[y, x] = adjust_color_hsv(original, hue, sat, val)
+        return out
+
+    def test_shift_matches_scalar_reference(self):
+        image = self._random_image()
+        got = np.array(shift_image_hsv(image, hue_shift=70, sat_shift=-15, val_shift=10))
+        expected = self._scalar_shift_reference(image, 70, -15, 10, None)
+        assert np.max(np.abs(got.astype(int) - expected.astype(int))) <= 1
+        assert np.array_equal(got[:, :, 3], expected[:, :, 3])
+
+    def test_restricted_shift_matches_scalar_reference(self):
+        image = self._random_image(seed=9)
+        restrict = [(12, 34, 56, 255), (200, 100, 50, 78)]
+        array = np.array(image)
+        array[2, 2] = restrict[0]
+        array[5, 7] = restrict[1]
+        array[8, 3] = restrict[0]
+        image = Image.fromarray(array, "RGBA")
+
+        got = np.array(shift_image_hsv(image, 120, 25, -5, only_colors=restrict))
+        expected = self._scalar_shift_reference(image, 120, 25, -5, restrict)
+
+        changed_pixels = np.any(got != np.array(image), axis=-1)
+        assert changed_pixels.sum() == 3
+        assert np.max(np.abs(got.astype(int) - expected.astype(int))) <= 1
+
+    def test_hsv_range_mask_matches_scalar_reference(self):
+        import colorsys as cs
+
+        image = self._random_image(seed=17, size=(16, 16))
+        base = (128, 64, 200)
+        tolerances = (40.0, 30.0, 35.0)
+
+        r, g, b = base[0] / 255, base[1] / 255, base[2] / 255
+        bh, bs, bv = cs.rgb_to_hsv(r, g, b)
+
+        array = np.array(image.convert("RGBA"))
+        expected = np.zeros((16, 16), dtype=bool)
+        for y in range(16):
+            for x in range(16):
+                pr, pg, pb = (c / 255.0 for c in array[y, x, :3])
+                h, s, v = cs.rgb_to_hsv(pr, pg, pb)
+                hd = abs(h * 360 - bh * 360)
+                if hd > 180:
+                    hd = 360 - hd
+                expected[y, x] = (
+                    hd <= tolerances[0]
+                    and abs(s * 100 - bs * 100) <= tolerances[1]
+                    and abs(v * 100 - bv * 100) <= tolerances[2]
+                )
+
+        mask = build_color_mask(image, base, tolerances, "hsv_range")
+        assert np.array_equal(mask, expected)

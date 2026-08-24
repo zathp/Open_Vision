@@ -34,11 +34,90 @@ def _to_rgba(image: Image.Image) -> Image.Image:
     return image if image.mode == "RGBA" else image.convert("RGBA")
 
 
+def _pack_rgba(array: np.ndarray) -> np.ndarray:
+    """Pack an (N, 4) uint8 channel array into one uint32 value per row."""
+    channels = array.astype(np.uint64)
+    return (
+        (channels[:, 0] << 24)
+        | (channels[:, 1] << 16)
+        | (channels[:, 2] << 8)
+        | channels[:, 3]
+    )
+
+
+def _rgb_to_hsv_arrays(rgb: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Convert an (..., 3) float64 RGB array (0-1 range) to H, S, V arrays.
+
+    Hue in turns [0, 1); mirrors colorsys.rgb_to_hsv semantics including
+    exact-equality tie handling between channels.
+    """
+    r = rgb[..., 0]
+    g = rgb[..., 1]
+    b = rgb[..., 2]
+
+    maxc = np.max(rgb, axis=-1)
+    minc = np.min(rgb, axis=-1)
+    delta = maxc - minc
+
+    value = maxc
+    safe_max = np.where(maxc == 0, 1.0, maxc)
+    saturation = np.where(maxc == 0, 0.0, delta / safe_max)
+
+    safe_delta = np.where(delta == 0, 1.0, delta)
+    hue_when_red = ((g - b) / safe_delta) % 6.0
+    hue_when_green = (b - r) / safe_delta + 2.0
+    hue_when_blue = (r - g) / safe_delta + 4.0
+
+    hue = np.where(
+        maxc == r,
+        hue_when_red,
+        np.where(maxc == g, hue_when_green, hue_when_blue),
+    )
+    hue = np.where(delta == 0, 0.0, hue / 6.0) % 1.0
+    return hue, saturation, value
+
+
+def _hsv_to_rgb_arrays(
+    hue: np.ndarray, saturation: np.ndarray, value: np.ndarray
+) -> np.ndarray:
+    """
+    Convert H (turns [0, 1)), S, V arrays to an (..., 3) float64 RGB array.
+
+    Mirrors colorsys.hsv_to_rgb sector construction.
+    """
+    scaled = hue * 6.0
+    sector = np.floor(scaled).astype(np.int64) % 6
+    frac = scaled - np.floor(scaled)
+
+    p = value * (1.0 - saturation)
+    q = value * (1.0 - frac * saturation)
+    t = value * (1.0 - (1.0 - frac) * saturation)
+
+    red = np.choose(sector, [value, q, p, p, t, value])
+    green = np.choose(sector, [t, value, value, q, p, p])
+    blue = np.choose(sector, [p, p, t, value, value, q])
+    return np.stack([red, green, blue], axis=-1)
+
+
+def _shift_hsv_arrays(
+    hue: np.ndarray, saturation: np.ndarray, value: np.ndarray,
+    hue_shift: float, sat_shift: float, val_shift: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    shifted_h = np.mod(hue + hue_shift / 360.0, 1.0)
+    shifted_s = np.clip(saturation + sat_shift / 100.0, 0.0, 1.0)
+    shifted_v = np.clip(value + val_shift / 100.0, 0.0, 1.0)
+    return shifted_h, shifted_s, shifted_v
+
+
 def downsample_image(image: Image.Image, output_size: Tuple[int, int] = (32, 32)) -> Image.Image:
     """
     Downsample an image by HSV averaging fully opaque pixels per block.
 
-    Adapted from Initial_Forms/Downsampler.downsample_image_hsv.
+    Adapted from Initial_Forms/Downsampler.downsample_image_hsv (vectorized:
+    identical algorithm, numpy block reduction instead of per-pixel loops;
+    results may differ from the scalar original by at most 1/255 per channel
+    due to floating-point summation order).
 
     Args:
         image: Input PIL image.
@@ -56,44 +135,44 @@ def downsample_image(image: Image.Image, output_size: Tuple[int, int] = (32, 32)
 
     rgba = _to_rgba(image)
     source_w, source_h = rgba.size
-    block_w = max(source_w / width, 1e-9)
-    block_h = max(source_h / height, 1e-9)
+    pixels = np.array(rgba).astype(np.float64)
+    opaque = pixels[:, :, 3] == 255.0
 
-    pixels = np.array(rgba)
+    rgb = pixels[:, :, :3] / 255.0
+    hue, saturation, value = _rgb_to_hsv_arrays(rgb)
+
+    sin_h = np.sin(hue * 2.0 * np.pi) * opaque
+    cos_h = np.cos(hue * 2.0 * np.pi) * opaque
+
+    starts_x = np.clip((np.arange(width) * (source_w / width)).astype(np.int64), 0, source_w - 1)
+    starts_y = np.clip((np.arange(height) * (source_h / height)).astype(np.int64), 0, source_h - 1)
+
+    def block_reduce(array: np.ndarray) -> np.ndarray:
+        reduced = np.add.reduceat(array, starts_y, axis=0)
+        return np.add.reduceat(reduced, starts_x, axis=1)
+
+    counts = block_reduce(opaque.astype(np.float64))
+    sum_sin = block_reduce(sin_h)
+    sum_cos = block_reduce(cos_h)
+    sum_s = block_reduce(saturation * opaque)
+    sum_v = block_reduce(value * opaque)
+
+    valid = counts > 0
+    safe_counts = np.where(valid, counts, 1.0)
+
+    mean_sin = sum_sin / safe_counts
+    mean_cos = sum_cos / safe_counts
+    avg_h = np.arctan2(mean_sin, mean_cos) / (2.0 * np.pi)
+    avg_h = np.where(avg_h < 0, avg_h + 1.0, avg_h)
+    avg_s = sum_s / safe_counts
+    avg_v = sum_v / safe_counts
+
+    rgb_out = _hsv_to_rgb_arrays(avg_h, avg_s, avg_v)
+    rgb_out = np.floor(np.clip(rgb_out, 0.0, 1.0) * 255.0)
+
     output_array = np.zeros((height, width, 4), dtype=np.uint8)
-
-    for out_y in range(height):
-        start_y = int(out_y * block_h)
-        end_y = max(int((out_y + 1) * block_h), start_y + 1)
-        for out_x in range(width):
-            start_x = int(out_x * block_w)
-            end_x = max(int((out_x + 1) * block_w), start_x + 1)
-
-            block = pixels[start_y:min(end_y, source_h), start_x:min(end_x, source_w)]
-            if block.size == 0:
-                continue
-            opaque_pixels = block[block[:, :, 3] == 255]
-            if opaque_pixels.size == 0:
-                continue
-
-            hsv_values = []
-            for pixel in opaque_pixels:
-                r, g, b = pixel[0] / 255.0, pixel[1] / 255.0, pixel[2] / 255.0
-                h, s, v = colorsys.rgb_to_hsv(r, g, b)
-                hsv_values.append([h, s, v])
-            hsv_array = np.array(hsv_values)
-
-            avg_h = np.arctan2(
-                np.mean(np.sin(hsv_array[:, 0] * 2 * np.pi)),
-                np.mean(np.cos(hsv_array[:, 0] * 2 * np.pi)),
-            ) / (2 * np.pi)
-            if avg_h < 0:
-                avg_h += 1.0
-            avg_s = float(np.mean(hsv_array[:, 1]))
-            avg_v = float(np.mean(hsv_array[:, 2]))
-
-            r, g, b = colorsys.hsv_to_rgb(avg_h, avg_s, avg_v)
-            output_array[out_y, out_x] = [int(r * 255), int(g * 255), int(b * 255), 255]
+    output_array[:, :, :3] = np.where(valid[..., None], rgb_out, 0).astype(np.uint8)
+    output_array[:, :, 3] = np.where(valid, 255, 0).astype(np.uint8)
 
     return Image.fromarray(output_array, "RGBA")
 
@@ -232,15 +311,13 @@ def build_color_mask(
     base_h, base_s, base_v = colorsys.rgb_to_hsv(r, g, b)
     base_h_deg, base_s_pct, base_v_pct = base_h * 360.0, base_s * 100.0, base_v * 100.0
 
+    height, width = rgba.size[1], rgba.size[0]
     normalized = rgb_array.astype(np.float64) / 255.0
-    flat = normalized.reshape(-1, 3)
-    hsv_flat = np.array(
-        [colorsys.rgb_to_hsv(pixel[0], pixel[1], pixel[2]) for pixel in flat],
-        dtype=np.float64,
-    )
-    h_deg = hsv_flat[:, 0] * 360.0
-    s_pct = hsv_flat[:, 1] * 100.0
-    v_pct = hsv_flat[:, 2] * 100.0
+    pixel_h, pixel_s, pixel_v = _rgb_to_hsv_arrays(normalized.reshape(-1, 3))
+
+    h_deg = pixel_h * 360.0
+    s_pct = pixel_s * 100.0
+    v_pct = pixel_v * 100.0
 
     h_diff = np.abs(h_deg - base_h_deg)
     h_diff = np.where(h_diff > 180.0, 360.0 - h_diff, h_diff)
@@ -250,7 +327,7 @@ def build_color_mask(
         & (np.abs(s_pct - base_s_pct) <= tolerances[1])
         & (np.abs(v_pct - base_v_pct) <= tolerances[2])
     )
-    return matches.reshape(rgba.size[1], rgba.size[0])
+    return matches.reshape(height, width)
 
 
 def replace_color_range(
@@ -341,7 +418,10 @@ def shift_image_hsv(
     """
     Apply an HSV shift to every pixel, optionally restricted to exact colors.
 
-    Backs the editor's HSV mass-edit actions (from Greenscreen2).
+    Backs the editor's HSV mass-edit actions (from Greenscreen2). Vectorized:
+    zero shifts return an exact copy; nonzero shifts may differ from the
+    legacy per-pixel implementation by at most 1/255 per channel due to
+    floating-point rounding.
 
     Args:
         image: Input PIL image.
@@ -356,22 +436,35 @@ def shift_image_hsv(
     """
     rgba = _to_rgba(image)
     array = np.array(rgba)
-    restrict_set = None
-    if only_colors is not None:
-        restrict_set = {tuple(int(c) for c in color[:4]) for color in only_colors}
 
-    shifted_cache = {}
+    if hue_shift == 0 and sat_shift == 0 and val_shift == 0:
+        return Image.fromarray(array, "RGBA")
+
     height, width = array.shape[:2]
+    flat = array.reshape(-1, 4)
+
+    if only_colors is None:
+        target_indices = np.arange(flat.shape[0])
+    else:
+        packed_pixels = _pack_rgba(flat)
+        packed_targets = np.unique(
+            np.array([_pack_rgba(np.array([[int(c) for c in color[:4]]]))[0] for color in only_colors],
+                     dtype=np.uint64)
+        )
+        target_indices = np.nonzero(np.isin(packed_pixels, packed_targets))[0]
+
+    if target_indices.size == 0:
+        return Image.fromarray(array, "RGBA")
+
+    subset_rgb = flat[target_indices, :3].astype(np.float64) / 255.0
+    h, s, v = _rgb_to_hsv_arrays(subset_rgb)
+    h, s, v = _shift_hsv_arrays(h, s, v, hue_shift, sat_shift, val_shift)
+    shifted_rgb = _hsv_to_rgb_arrays(h, s, v)
+
     result = array.copy()
-    for y in range(height):
-        for x in range(width):
-            original = tuple(int(c) for c in array[y, x][:4])
-            if restrict_set is not None and original not in restrict_set:
-                continue
-            adjusted = shifted_cache.get(original)
-            if adjusted is None:
-                adjusted = adjust_color_hsv(original, hue_shift, sat_shift, val_shift)
-                shifted_cache[original] = adjusted
-            result[y, x, :4] = adjusted
+    result_flat = result.reshape(-1, 4)
+    result_flat[target_indices, :3] = np.floor(
+        np.clip(shifted_rgb, 0.0, 1.0) * 255.0
+    ).astype(np.uint8)
 
     return Image.fromarray(result, "RGBA")
